@@ -1698,11 +1698,13 @@ function fetchGSheetViz(sheetId, gid) {
     const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&tq=select+*&gid=${gid}&cb=${cbName}`;
     const timeout = setTimeout(() => {
       delete window[cbName];
-      reject(new Error('انتهت مهلة الاتصال'));
-    }, 15000);
+      if(script.parentNode) script.parentNode.removeChild(script);
+      reject(new Error('انتهت مهلة الاتصال — تأكد إن الشيت منشور على الويب'));
+    }, 30000);
     window[cbName] = function(data) {
       clearTimeout(timeout);
       delete window[cbName];
+      if(script.parentNode) script.parentNode.removeChild(script);
       try {
         const cols = data.table.cols.map(c => c.label || c.id || '');
         const rows = data.table.rows.map(row => {
@@ -1718,9 +1720,13 @@ function fetchGSheetViz(sheetId, gid) {
     };
     const script = document.createElement('script');
     script.src = url;
-    script.onerror = () => { clearTimeout(timeout); delete window[cbName]; reject(new Error('فشل تحميل البيانات')); };
+    script.onerror = () => {
+      clearTimeout(timeout);
+      delete window[cbName];
+      if(script.parentNode) script.parentNode.removeChild(script);
+      reject(new Error('فشل تحميل البيانات — تأكد إن الشيت عام ومنشور'));
+    };
     document.head.appendChild(script);
-    setTimeout(() => { try { document.head.removeChild(script); } catch(e){} }, 20000);
   });
 }
 
