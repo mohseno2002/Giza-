@@ -785,7 +785,7 @@ function renderTrend(){
 
 /* ══════════ SHIFT ══════════ */
 function calcShift(){
-  const base=new Date(2026,2,20);base.setHours(0,0,0,0);
+  const base=new Date(2026,2,19);base.setHours(0,0,0,0);
   const today=new Date();today.setHours(0,0,0,0);
   const diff=Math.round((today-base)/(864e5));
   const cycle=((diff%15)+15)%15;
