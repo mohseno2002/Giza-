@@ -171,7 +171,7 @@ select{background:var(--card);border:1px solid var(--border2);color:var(--text);
 .trend-h{position:relative;height:280px;}
 
 /* SMART PANEL */
-.smart-panel{position:fixed;left:12px;bottom:12px;width:255px;background:#fff;border:2px solid var(--border2);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-family:'Cairo',sans-serif;z-index:9999;touch-action:none;user-select:none;}
+.smart-panel{position:fixed;left:12px;bottom:12px;width:290px;background:#fff;border:2px solid var(--border2);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-family:'Cairo',sans-serif;z-index:9999;touch-action:none;user-select:none;}
 .sp-hdr{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:linear-gradient(135deg,var(--navy3),var(--navy2));border-radius:10px 10px 0 0;cursor:grab;}
 .sp-hdr:active{cursor:grabbing;}
 .sp-title{font-size:11px;font-weight:900;color:#fff;}
@@ -179,6 +179,10 @@ select{background:var(--card);border:1px solid var(--border2);color:var(--text);
 .sp-body{padding:10px;}
 .smart-panel.collapsed .sp-body{display:none;}
 .smart-panel.collapsed .sp-hdr{border-radius:10px;}
+.sp-status{font-size:10px;font-weight:900;padding:4px 8px;border-radius:6px;margin-bottom:6px;text-align:center;display:none;}
+.sp-status.safe{background:#e8f5e9;color:#2e7d32;display:block;}
+.sp-status.warn{background:#fff8e1;color:#f57f17;display:block;}
+.sp-status.danger{background:#ffebee;color:#c62828;display:block;}
 .sp-body label{font-size:10px;color:var(--text2);display:block;margin-bottom:2px;}
 .sp-body input{width:100%;padding:4px 7px;margin-bottom:6px;border:1px solid var(--border);border-radius:6px;font-size:11px;font-family:'Cairo',sans-serif;outline:none;}
 .sp-calc{width:100%;padding:6px;border:none;border-radius:7px;background:var(--navy);color:#fff;font-weight:700;font-size:11px;cursor:pointer;font-family:'Cairo',sans-serif;}
@@ -310,18 +314,13 @@ footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-to
 <!-- SMART PANEL -->
 <div class="smart-panel" id="smartPanel">
   <div class="sp-hdr" id="spHandle">
-    <span class="sp-title">⚙️ توصية تشغيل اليوم</span>
+    <span class="sp-title">🧠 الذكاء التشغيلي</span>
     <button class="sp-btn" onclick="toggleSP()">−</button>
   </div>
   <div class="sp-body">
-    <label>منسوب فم الجيزة (م)</label>
-    <input id="spF" type="number" step="0.01" inputmode="decimal" placeholder="مثال: 26.20">
-    <label>منسوب الحومدية (م)</label>
-    <input id="spM" type="number" step="0.01" inputmode="decimal" placeholder="مثال: 20.50">
-    <label>منسوب الحواجز (م)</label>
-    <input id="spE" type="number" step="0.01" inputmode="decimal" placeholder="مثال: 16.70">
-    <button class="sp-calc" onclick="calcDecision()">تحليل التشغيل</button>
-    <div class="sp-result" id="spResult">أدخل المناسيب واضغط تحليل.</div>
+    <div id="spStatus" class="sp-status"></div>
+    <div class="sp-result" id="spResult">جاري التحليل...</div>
+    <button class="sp-calc" onclick="autoDecision()">🔄 إعادة التحليل</button>
   </div>
 </div>
 
@@ -573,7 +572,7 @@ function dcls(v){return v==null?'neu':v>0?'up':v<0?'dn':'neu';}
 function dsign(v,d=2){if(v==null)return'—';return(v>0?'+':'')+v.toFixed(d);}
 
 /* ══════════ RENDER ALL ══════════ */
-function renderAll(){renderManasib();renderFlows();}
+function renderAll(){renderManasib();renderFlows();autoDecision();}
 
 /* ══════════ RENDER MANASIB ══════════ */
 function renderManasib(){
@@ -828,28 +827,157 @@ function toggleSP(){
   handle.addEventListener('mousedown',onStart);handle.addEventListener('touchstart',onStart,{passive:false});
 })();
 
-function calcDecision(){
-  const s=parseFloat(document.getElementById('spF').value);
-  const m=parseFloat(document.getElementById('spM').value);
-  const e=parseFloat(document.getElementById('spE').value);
-  const r=document.getElementById('spResult');
-  if(isNaN(s)||isNaN(m)||isNaN(e)){r.innerHTML='أدخل الثلاث مناسيب أولاً.';return;}
-  const shift=document.getElementById('shiftLetter').textContent.trim();
-  const targets={أ:'أبو رجوان',ب:'الحوامدية',ج:'نهاية القطاع'};
-  let html=`<b>دور ${shift} — الهدف: ${targets[shift]||'القطاع'}</b><br>`;
-  if(s>26.1) html+='🔴 فم الجيزة مرتفع — قلل الفتحة.<br>';
-  else if(s<25.9) html+='🟡 فم الجيزة منخفض — زيد الضخ.<br>';
-  else html+='🟢 فم الجيزة مستقر.<br>';
-  if(m<20.5) html+='⚠️ الحومدية منخفض — فعّل المساندة.<br>';
-  else html+='✅ منتصف القطاع جيد.<br>';
-  const diff=s-e;
-  if(diff>10.5) html+='🔴 فرق القطاع كبير — سحب زائد.<br>';
-  else if(diff<9.5) html+='🟡 فرق صغير — المياه محبوسة.<br>';
-  else html+='✅ توزيع المياه مناسب.';
-  r.innerHTML=html;
+
+/* ══════════ SMART PANEL — AUTO DECISION ══════════ */
+// تعريف محاور كل دور
+const SHIFT_ZONES={
+  أ:[
+    {name:'حجز أبو الشقوق', side:'b', label:'خلف أبو الشقوق', ref:'start'},
+    {name:'حجز 39',          side:'f', label:'أمام 39'},
+    {name:'حجز 48',          side:'f', label:'أمام 48'},
+    {name:'حجز العياط',      side:'f', label:'أمام العياط'},
+    {name:'حجز أبو رجوان',   side:'f', label:'أمام أبو رجوان', ref:'end'},
+  ],
+  ب:[
+    {name:'حجز أبو رجوان',   side:'b', label:'خلف أبو رجوان',  ref:'start'},
+    {name:'حجز الحومدية',    side:'f', label:'أمام الحومدية',  ref:'end'},
+  ],
+  ج:[
+    {name:'حجز الحومدية',    side:'b', label:'خلف الحومدية',   ref:'start'},
+    {name:'فم المنصورية',    side:'f', label:'أمام المنصورية'},
+    {name:'حجز المنشية',     side:'f', label:'أمام المنشية'},
+    {name:'حجز الحواجز',     side:'f', label:'أمام الحواجز',   ref:'end'},
+  ],
+};
+
+// حدود المناسيب لكل محور (أمام/خلف) [min, max]
+const ZONE_LIMITS={
+  'حجز أبو الشقوق_b':[25.5,26.5],
+  'حجز 39_f':[24.5,25.5],
+  'حجز 48_f':[23.5,24.5],
+  'حجز العياط_f':[22.5,23.5],
+  'حجز أبو رجوان_f':[21.5,22.5],
+  'حجز أبو رجوان_b':[21.0,22.0],
+  'حجز الحومدية_f':[20.0,21.0],
+  'حجز الحومدية_b':[19.5,20.5],
+  'فم المنصورية_f':[19.0,20.0],
+  'حجز المنشية_f':[18.0,19.0],
+  'حجز الحواجز_f':[16.5,17.5],
+};
+
+function stVal(rec,name,side){
+  return side==='f'?rec.stations?.[name]?.f:rec.stations?.[name]?.b;
 }
 
-/* ══════════ PRINT ══════════ */
+function stRow(label,val,limKey){
+  if(val==null) return `<div style="margin-bottom:4px;padding:3px 7px;background:var(--bg2);border-radius:6px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:9px;color:var(--text3)">${label}</span><span style="font-size:9px;color:var(--text3)">—</span></div>`;
+  const lim=ZONE_LIMITS[limKey];
+  let cls='🟢',col='#2e7d32',note='';
+  if(lim){
+    if(val<lim[0]){cls='🔴';col='#c62828';note=' ↓ منخفض';}
+    else if(val>lim[1]){cls='🟠';col='#e65100';note=' ↑ مرتفع';}
+  }
+  return `<div style="margin-bottom:4px;padding:3px 7px;background:var(--bg2);border-radius:6px;display:flex;justify-content:space-between;align-items:center">
+    <span style="font-size:9px;color:var(--text2)">${cls} ${label}</span>
+    <span style="font-size:10px;font-weight:900;color:${col}">${val.toFixed(2)} م${note}</span>
+  </div>`;
+}
+
+function autoDecision(){
+  const mm=String(selMonth).padStart(2,'0');
+  const dd=String(selDay).padStart(2,'0');
+  const key=mm+'-'+dd;
+  const rec=DB.lookup[key]?.[CURR];
+  const r=document.getElementById('spResult');
+  const st=document.getElementById('spStatus');
+
+  if(!rec||!rec.stations){
+    st.className='sp-status warn';st.textContent='⚠️ لا توجد بيانات';
+    r.innerHTML='<span style="color:var(--text3);font-size:10px">لا توجد بيانات لهذا اليوم.<br>اضغط "تحديث من Sheets" أولاً.</span>';
+    return;
+  }
+
+  const shift=document.getElementById('shiftLetter').textContent.trim();
+  const targets={أ:'أبو رجوان',ب:'الحومدية',ج:'نهاية القطاع'};
+  const zone=SHIFT_ZONES[shift]||[];
+  const totalFlow=rec.flows?.['__total__'];
+
+  // حساب عدد التنبيهات
+  let dangerCount=0;
+  zone.forEach(z=>{
+    const v=stVal(rec,z.name,z.side);
+    const lim=ZONE_LIMITS[z.name+'_'+z.side];
+    if(v!=null&&lim&&(v<lim[0]||v>lim[1])) dangerCount++;
+  });
+  if(totalFlow!=null&&totalFlow<1.5) dangerCount++;
+
+  if(dangerCount===0){
+    st.className='sp-status safe';st.textContent='✅ الحالة العامة: آمنة';
+  }else if(dangerCount<=2){
+    st.className='sp-status warn';st.textContent='⚠️ الحالة: تحتاج متابعة';
+  }else{
+    st.className='sp-status danger';st.textContent='🔴 الحالة: خطر — تدخل فوري';
+  }
+
+  // رأس البانيل
+  const shiftColors={أ:'#1565c0',ب:'#e65100',ج:'#2e7d32'};
+  let html=`<div style="font-size:10px;font-weight:900;color:${shiftColors[shift]||'var(--navy)'};margin-bottom:7px;padding:4px 7px;background:var(--bg2);border-radius:7px;border-right:3px solid ${shiftColors[shift]||'var(--navy)'}">
+    دور ${shift} — الهدف: ${targets[shift]||'القطاع'}
+  </div>`;
+
+  // محاور الدور
+  html+=`<div style="font-size:9px;color:var(--text3);margin-bottom:4px;font-weight:700">📍 محاور الدور:</div>`;
+  zone.forEach(z=>{
+    const v=stVal(rec,z.name,z.side);
+    html+=stRow(z.label,v,z.name+'_'+z.side);
+  });
+
+  // فارق الدور (أول - آخر)
+  if(zone.length>=2){
+    const vStart=stVal(rec,zone[0].name,zone[0].side);
+    const vEnd=stVal(rec,zone[zone.length-1].name,zone[zone.length-1].side);
+    if(vStart!=null&&vEnd!=null){
+      const diff=vStart-vEnd;
+      let dcol='#2e7d32',dico='✅';
+      if(diff>zone.length*1.2){dcol='#c62828';dico='🔴';}
+      else if(diff<zone.length*0.7){dcol='#f57f17';dico='🟡';}
+      html+=`<div style="margin-top:5px;padding:4px 7px;background:#f3f6f9;border-radius:6px;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:9px;color:var(--text2)">${dico} فارق الدور (بداية←نهاية)</span>
+        <span style="font-size:11px;font-weight:900;color:${dcol}">${diff.toFixed(2)} م</span>
+      </div>`;
+    }
+  }
+
+  // التصرف
+  if(totalFlow!=null){
+    let fcol='#2e7d32',fico='🟢',fnote='تصرف مناسب';
+    if(totalFlow<1.5){fcol='#c62828';fico='🔴';fnote='ضعيف — زيادة الوحدات';}
+    else if(totalFlow>3){fcol='#f57f17';fico='🟡';fnote='عالي — مراجعة التشغيل';}
+    html+=`<div style="margin-top:5px;padding:4px 7px;background:var(--bg2);border-radius:6px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:9px;color:var(--text2)">${fico} إجمالي التصرف</span>
+      <span style="font-size:10px;font-weight:900;color:${fcol}">${totalFlow.toFixed(4)}<span style="font-size:8px;color:var(--text3)"> م.م³ — ${fnote}</span></span>
+    </div>`;
+  }
+
+  // توصية ذكية
+  const sugg=[];
+  zone.forEach(z=>{
+    const v=stVal(rec,z.name,z.side);
+    const lim=ZONE_LIMITS[z.name+'_'+z.side];
+    if(v!=null&&lim){
+      if(v<lim[0]) sugg.push(`رفع منسوب ${z.label}`);
+      else if(v>lim[1]) sugg.push(`خفض منسوب ${z.label}`);
+    }
+  });
+  if(totalFlow!=null&&totalFlow<1.5) sugg.push('زيادة وحدات الضخ');
+  if(sugg.length){
+    html+=`<div style="margin-top:7px;padding:5px 8px;background:#e3f2fd;border-radius:7px;border-right:3px solid #1565c0;font-size:10px;color:#0d47a1;line-height:1.7">
+      <b>💡 توصيات:</b><br>${sugg.map(s=>'• '+s).join('<br>')}
+    </div>`;
+  }
+
+  r.innerHTML=html;
+}
 function printDashboard(){
   const now=new Date();
   document.getElementById('printDateLbl').textContent=now.toLocaleDateString('ar-EG',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
