@@ -832,54 +832,55 @@ function toggleSP(){
 // تعريف محاور كل دور
 const SHIFT_ZONES={
   أ:[
-    {name:'حجز أبو الشقوق', side:'b', label:'خلف أبو الشقوق', ref:'start'},
+    {name:'حجز أبو الشقوق', side:'b', label:'خلف أبو الشقوق'},
     {name:'حجز 39',          side:'f', label:'أمام 39'},
     {name:'حجز 48',          side:'f', label:'أمام 48'},
     {name:'حجز العياط',      side:'f', label:'أمام العياط'},
-    {name:'حجز أبو رجوان',   side:'f', label:'أمام أبو رجوان', ref:'end'},
+    {name:'حجز أبو رجوان',   side:'f', label:'أمام أبو رجوان', critical:true, min:21.90,
+     alertLow:'منخفض — افتح فتحات الجسور أو زد الضخ فوراً',
+     alertOk:'مستقر — لا يوجد تدخل مطلوب'},
   ],
   ب:[
-    {name:'حجز أبو رجوان',   side:'b', label:'خلف أبو رجوان',  ref:'start'},
-    {name:'حجز الحومدية',    side:'f', label:'أمام الحومدية',  ref:'end'},
+    {name:'حجز أبو رجوان',   side:'b', label:'خلف أبو رجوان'},
+    {name:'حجز الحومدية',    side:'f', label:'أمام الحومدية',  critical:true, min:20.90,
+     alertLow:'منخفض — شغّل وحدات المساندة فوراً',
+     alertOk:'مستقر — لا يوجد تدخل مطلوب'},
   ],
   ج:[
-    {name:'حجز الحومدية',    side:'b', label:'خلف الحومدية',   ref:'start'},
-    {name:'فم المنصورية',    side:'f', label:'أمام المنصورية'},
+    {name:'حجز الحومدية',    side:'b', label:'خلف الحومدية'},
+    {name:'فم المنصورية',    side:'f', label:'أمام المنصورية', critical:true, min:19.50,
+     alertLow:'منخفض — رفع منسوب المنصورية فوراً',
+     alertOk:'مستقر — لا يوجد تدخل مطلوب'},
     {name:'حجز المنشية',     side:'f', label:'أمام المنشية'},
-    {name:'حجز الحواجز',     side:'f', label:'أمام الحواجز',   ref:'end'},
+    {name:'حجز الحواجز',     side:'f', label:'أمام الحواجز'},
   ],
 };
 
-// حدود المناسيب لكل محور (أمام/خلف) [min, max]
-const ZONE_LIMITS={
-  'حجز أبو الشقوق_b':[25.5,26.5],
-  'حجز 39_f':[24.5,25.5],
-  'حجز 48_f':[23.5,24.5],
-  'حجز العياط_f':[22.5,23.5],
-  'حجز أبو رجوان_f':[21.5,22.5],
-  'حجز أبو رجوان_b':[21.0,22.0],
-  'حجز الحومدية_f':[20.0,21.0],
-  'حجز الحومدية_b':[19.5,20.5],
-  'فم المنصورية_f':[19.0,20.0],
-  'حجز المنشية_f':[18.0,19.0],
-  'حجز الحواجز_f':[16.5,17.5],
+// المحدد الثابت في كل الأحوال
+const FIXED_CRITICAL={name:'فم المنصورية', side:'f', label:'أمام المنصورية', min:19.50,
+  alertLow:'⚠️ أمام المنصورية أقل من 19.50 م — تدخل فوري في كل الأحوال',
 };
 
 function stVal(rec,name,side){
   return side==='f'?rec.stations?.[name]?.f:rec.stations?.[name]?.b;
 }
 
-function stRow(label,val,limKey){
-  if(val==null) return `<div style="margin-bottom:4px;padding:3px 7px;background:var(--bg2);border-radius:6px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:9px;color:var(--text3)">${label}</span><span style="font-size:9px;color:var(--text3)">—</span></div>`;
-  const lim=ZONE_LIMITS[limKey];
-  let cls='🟢',col='#2e7d32',note='';
-  if(lim){
-    if(val<lim[0]){cls='🔴';col='#c62828';note=' ↓ منخفض';}
-    else if(val>lim[1]){cls='🟠';col='#e65100';note=' ↑ مرتفع';}
+function stRow(label,val,critical,min){
+  const noData=val==null;
+  if(noData) return `<div style="margin-bottom:4px;padding:4px 8px;background:var(--bg2);border-radius:7px;display:flex;justify-content:space-between;align-items:center">
+    <span style="font-size:9px;color:var(--text3)">${label}</span>
+    <span style="font-size:9px;color:var(--text3)">—</span>
+  </div>`;
+
+  let bg='var(--bg2)',col='#2e7d32',ico='🟢',note='';
+  if(critical&&min!=null){
+    if(val<min){bg='#ffebee';col='#c62828';ico='🔴';note=` ↓ (الحد ${min.toFixed(2)})`;}
+    else{bg='#e8f5e9';col='#2e7d32';ico='🟢';note=` ✓ (الحد ${min.toFixed(2)})`;}
   }
-  return `<div style="margin-bottom:4px;padding:3px 7px;background:var(--bg2);border-radius:6px;display:flex;justify-content:space-between;align-items:center">
-    <span style="font-size:9px;color:var(--text2)">${cls} ${label}</span>
-    <span style="font-size:10px;font-weight:900;color:${col}">${val.toFixed(2)} م${note}</span>
+  const bold=critical?'font-weight:900;font-size:11px':'font-size:10px;font-weight:700';
+  return `<div style="margin-bottom:4px;padding:4px 8px;background:${bg};border-radius:7px;display:flex;justify-content:space-between;align-items:center${critical?';border:1px solid '+(val<min?'#ef9a9a':'#a5d6a7'):''}">
+    <span style="font-size:9px;color:var(--text2)">${ico} ${label}${critical?' ⭐':''}</span>
+    <span style="${bold};color:${col}">${val.toFixed(2)} م<span style="font-size:8px;color:${col};opacity:.8">${note}</span></span>
   </div>`;
 }
 
@@ -899,80 +900,100 @@ function autoDecision(){
 
   const shift=document.getElementById('shiftLetter').textContent.trim();
   const targets={أ:'أبو رجوان',ب:'الحومدية',ج:'نهاية القطاع'};
+  const shiftColors={أ:'#1565c0',ب:'#e65100',ج:'#2e7d32'};
   const zone=SHIFT_ZONES[shift]||[];
   const totalFlow=rec.flows?.['__total__'];
 
-  // حساب عدد التنبيهات
-  let dangerCount=0;
-  zone.forEach(z=>{
-    const v=stVal(rec,z.name,z.side);
-    const lim=ZONE_LIMITS[z.name+'_'+z.side];
-    if(v!=null&&lim&&(v<lim[0]||v>lim[1])) dangerCount++;
-  });
-  if(totalFlow!=null&&totalFlow<1.5) dangerCount++;
+  // ━━ فحص المحددات الحرجة ━━
+  const criticals=[];   // خروقات المحددات
+  const warnings=[];    // توصيات
 
-  if(dangerCount===0){
-    st.className='sp-status safe';st.textContent='✅ الحالة العامة: آمنة';
-  }else if(dangerCount<=2){
-    st.className='sp-status warn';st.textContent='⚠️ الحالة: تحتاج متابعة';
-  }else{
-    st.className='sp-status danger';st.textContent='🔴 الحالة: خطر — تدخل فوري';
+  // المحدد الثابت (فم المنصورية) — يُفحص دائماً
+  const fixedVal=stVal(rec,FIXED_CRITICAL.name,FIXED_CRITICAL.side);
+  let fixedBreach=false;
+  if(fixedVal!=null&&fixedVal<FIXED_CRITICAL.min){
+    fixedBreach=true;
+    criticals.push(FIXED_CRITICAL.alertLow);
   }
 
-  // رأس البانيل
-  const shiftColors={أ:'#1565c0',ب:'#e65100',ج:'#2e7d32'};
-  let html=`<div style="font-size:10px;font-weight:900;color:${shiftColors[shift]||'var(--navy)'};margin-bottom:7px;padding:4px 7px;background:var(--bg2);border-radius:7px;border-right:3px solid ${shiftColors[shift]||'var(--navy)'}">
-    دور ${shift} — الهدف: ${targets[shift]||'القطاع'}
-  </div>`;
-
-  // محاور الدور
-  html+=`<div style="font-size:9px;color:var(--text3);margin-bottom:4px;font-weight:700">📍 محاور الدور:</div>`;
-  zone.forEach(z=>{
-    const v=stVal(rec,z.name,z.side);
-    html+=stRow(z.label,v,z.name+'_'+z.side);
-  });
-
-  // فارق الدور (أول - آخر)
-  if(zone.length>=2){
-    const vStart=stVal(rec,zone[0].name,zone[0].side);
-    const vEnd=stVal(rec,zone[zone.length-1].name,zone[zone.length-1].side);
-    if(vStart!=null&&vEnd!=null){
-      const diff=vStart-vEnd;
-      let dcol='#2e7d32',dico='✅';
-      if(diff>zone.length*1.2){dcol='#c62828';dico='🔴';}
-      else if(diff<zone.length*0.7){dcol='#f57f17';dico='🟡';}
-      html+=`<div style="margin-top:5px;padding:4px 7px;background:#f3f6f9;border-radius:6px;display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:9px;color:var(--text2)">${dico} فارق الدور (بداية←نهاية)</span>
-        <span style="font-size:11px;font-weight:900;color:${dcol}">${diff.toFixed(2)} م</span>
-      </div>`;
+  // المحدد الخاص بالدور
+  const critZ=zone.find(z=>z.critical);
+  let critVal=null,critBreach=false;
+  if(critZ){
+    critVal=stVal(rec,critZ.name,critZ.side);
+    if(critVal!=null&&critVal<critZ.min){
+      critBreach=true;
+      criticals.push(`🔴 ${critZ.label} = ${critVal.toFixed(2)} م — أقل من الحد (${critZ.min.toFixed(2)} م) — ${critZ.alertLow}`);
     }
   }
 
-  // التصرف
+  if(totalFlow!=null&&totalFlow<1.5) warnings.push('إجمالي التصرف ضعيف — زيادة وحدات الضخ');
+
+  // ━━ شريط الحالة ━━
+  const totalProblems=criticals.length+warnings.length;
+  if(totalProblems===0){
+    st.className='sp-status safe';st.textContent='✅ الحالة: آمنة — جميع المحددات مستوفاة';
+  }else if(criticals.length===0){
+    st.className='sp-status warn';st.textContent='⚠️ تحذير — تحتاج متابعة';
+  }else{
+    st.className='sp-status danger';st.textContent='🔴 تنبيه — تجاوز محدد حرج!';
+  }
+
+  // ━━ رأس البانيل ━━
+  let html=`<div style="font-size:10px;font-weight:900;color:${shiftColors[shift]||'var(--navy)'};margin-bottom:7px;padding:5px 8px;background:var(--bg2);border-radius:7px;border-right:3px solid ${shiftColors[shift]||'var(--navy)'}">
+    دور ${shift} — الهدف: ${targets[shift]||'القطاع'}
+  </div>`;
+
+  // ━━ المحدد الحرج للدور ━━
+  if(critZ){
+    html+=`<div style="font-size:9px;color:var(--text3);font-weight:700;margin-bottom:4px">⭐ المحدد الحرج للدور:</div>`;
+    html+=stRow(critZ.label,critVal,true,critZ.min);
+    if(!critBreach&&critVal!=null){
+      html+=`<div style="margin-bottom:6px;padding:3px 7px;background:#e8f5e9;border-radius:6px;font-size:9px;color:#2e7d32">${critZ.alertOk}</div>`;
+    }else if(critBreach){
+      html+=`<div style="margin-bottom:6px;padding:3px 7px;background:#ffebee;border-radius:6px;font-size:9px;color:#c62828;font-weight:700">⚡ ${critZ.alertLow}</div>`;
+    }
+  }
+
+  // ━━ المحدد الثابت (المنصورية) — يظهر دائماً إذا لم يكن هو محدد الدور ━━
+  if(shift!=='ج'){
+    html+=`<div style="font-size:9px;color:var(--text3);font-weight:700;margin-bottom:4px">📌 محدد ثابت (كل الأحوال):</div>`;
+    html+=stRow(FIXED_CRITICAL.label,fixedVal,true,FIXED_CRITICAL.min);
+    if(fixedBreach){
+      html+=`<div style="margin-bottom:6px;padding:3px 7px;background:#ffebee;border-radius:6px;font-size:9px;color:#c62828;font-weight:700">${FIXED_CRITICAL.alertLow}</div>`;
+    }
+  }
+
+  // ━━ بقية محاور الدور للمعلومية ━━
+  const infoZones=zone.filter(z=>!z.critical);
+  if(infoZones.length){
+    html+=`<div style="font-size:9px;color:var(--text3);font-weight:700;margin:6px 0 4px">📍 محاور الدور (للمعلومية):</div>`;
+    infoZones.forEach(z=>{
+      const v=stVal(rec,z.name,z.side);
+      html+=stRow(z.label,v,false,null);
+    });
+  }
+
+  // ━━ التصرف ━━
   if(totalFlow!=null){
     let fcol='#2e7d32',fico='🟢',fnote='تصرف مناسب';
     if(totalFlow<1.5){fcol='#c62828';fico='🔴';fnote='ضعيف — زيادة الوحدات';}
     else if(totalFlow>3){fcol='#f57f17';fico='🟡';fnote='عالي — مراجعة التشغيل';}
-    html+=`<div style="margin-top:5px;padding:4px 7px;background:var(--bg2);border-radius:6px;display:flex;justify-content:space-between;align-items:center">
+    html+=`<div style="margin-top:5px;padding:4px 8px;background:var(--bg2);border-radius:7px;display:flex;justify-content:space-between;align-items:center">
       <span style="font-size:9px;color:var(--text2)">${fico} إجمالي التصرف</span>
-      <span style="font-size:10px;font-weight:900;color:${fcol}">${totalFlow.toFixed(4)}<span style="font-size:8px;color:var(--text3)"> م.م³ — ${fnote}</span></span>
+      <span style="font-size:10px;font-weight:900;color:${fcol}">${totalFlow.toFixed(4)} <span style="font-size:8px;font-weight:400;color:${fcol}">${fnote}</span></span>
     </div>`;
   }
 
-  // توصية ذكية
-  const sugg=[];
-  zone.forEach(z=>{
-    const v=stVal(rec,z.name,z.side);
-    const lim=ZONE_LIMITS[z.name+'_'+z.side];
-    if(v!=null&&lim){
-      if(v<lim[0]) sugg.push(`رفع منسوب ${z.label}`);
-      else if(v>lim[1]) sugg.push(`خفض منسوب ${z.label}`);
-    }
-  });
-  if(totalFlow!=null&&totalFlow<1.5) sugg.push('زيادة وحدات الضخ');
-  if(sugg.length){
-    html+=`<div style="margin-top:7px;padding:5px 8px;background:#e3f2fd;border-radius:7px;border-right:3px solid #1565c0;font-size:10px;color:#0d47a1;line-height:1.7">
-      <b>💡 توصيات:</b><br>${sugg.map(s=>'• '+s).join('<br>')}
+  // ━━ صندوق التوصيات ━━
+  const allActions=[...criticals,...warnings];
+  if(allActions.length){
+    html+=`<div style="margin-top:8px;padding:6px 9px;background:#fff3e0;border-radius:8px;border-right:3px solid #e65100;font-size:10px;color:#bf360c;line-height:1.9">
+      <b>⚡ إجراءات مطلوبة:</b><br>${allActions.map(a=>'• '+a).join('<br>')}
+    </div>`;
+  }else{
+    html+=`<div style="margin-top:8px;padding:6px 9px;background:#e8f5e9;border-radius:8px;font-size:10px;color:#1b5e20;text-align:center;font-weight:700">
+      ✅ لا يوجد تدخل مطلوب — استمر على نفس الإعداد
     </div>`;
   }
 
