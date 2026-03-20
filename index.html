@@ -2,8 +2,26 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>لوحة ري الجيزة — مناسيب وتصرفات</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>ري الجيزة</title>
+
+<!-- PWA Manifest -->
+<link rel="manifest" href="manifest.json">
+
+<!-- Theme & Status Bar -->
+<meta name="theme-color" content="#0f2440">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="application-name" content="ري الجيزة">
+
+<!-- iOS PWA -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ري الجيزة">
+<link rel="apple-touch-icon" href="icon-192.png">
+
+<!-- SEO / Share -->
+<meta name="description" content="لوحة مناسيب وتصرفات ري الجيزة — الإدارة العامة لري محافظة الجيزة">
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap" rel="stylesheet">
 <style>
@@ -199,10 +217,47 @@ select{background:var(--card);border:1px solid var(--border2);color:var(--text);
   .st-grid,.mc-grid,.fl-grid{grid-template-columns:1fr;}
   .fl-charts{grid-template-columns:1fr;}
 }
+/* PWA SAFE AREA (notch / home bar) */
+body{padding-bottom:env(safe-area-inset-bottom);}
+.hdr{padding-top:max(11px, env(safe-area-inset-top));}
+
+/* PWA INSTALL BANNER */
+#pwa-banner{display:none;position:fixed;bottom:0;left:0;right:0;z-index:99999;
+  background:linear-gradient(135deg,var(--navy3),var(--navy2));
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+  box-shadow:0 -4px 20px rgba(0,0,0,.3);
+  flex-direction:row-reverse;align-items:center;gap:10px;}
+#pwa-banner.show{display:flex;}
+.pwa-icon{font-size:26px;flex-shrink:0;}
+.pwa-text{flex:1;}
+.pwa-text b{display:block;font-size:12px;color:#fff;margin-bottom:2px;}
+.pwa-text span{font-size:10px;color:rgba(255,255,255,.65);}
+.pwa-install{background:#fff;color:var(--navy3);border:none;padding:7px 14px;
+  border-radius:8px;font-family:'Cairo',sans-serif;font-size:11px;font-weight:900;cursor:pointer;white-space:nowrap;}
+.pwa-close{background:none;border:none;color:rgba(255,255,255,.5);font-size:18px;cursor:pointer;padding:4px;flex-shrink:0;}
+
+/* OFFLINE BADGE */
+#offline-badge{display:none;position:fixed;top:60px;left:50%;transform:translateX(-50%);
+  background:#c62828;color:#fff;font-size:10px;font-weight:700;
+  padding:4px 14px;border-radius:20px;z-index:9999;box-shadow:0 2px 10px rgba(0,0,0,.3);}
+#offline-badge.show{display:block;}
+
 footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-top:1px solid var(--border);background:var(--bg2);}
 </style>
 </head>
 <body>
+
+<div id="offline-badge">📡 لا يوجد اتصال — عرض آخر بيانات محفوظة</div>
+
+<div id="pwa-banner">
+  <button class="pwa-close" onclick="closePwaBanner()">✕</button>
+  <div class="pwa-text">
+    <b>📲 تثبيت تطبيق ري الجيزة</b>
+    <span>اضغط "تثبيت" لإضافته لشاشتك الرئيسية</span>
+  </div>
+  <div class="pwa-icon">💧</div>
+  <button class="pwa-install" id="pwaInstallBtn">تثبيت</button>
+</div>
 
 <div class="hdr">
   <div class="hdr-l">
@@ -1006,6 +1061,110 @@ function printDashboard(){
   window.print();
 }
 
+/* ══════════ PWA ══════════ */
+// ─── Service Worker ───
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('sw.js')
+      .then(reg=>{
+        console.log('SW registered');
+        // فحص تحديث كل 10 دقايق
+        setInterval(()=>reg.update(),10*60*1000);
+      })
+      .catch(e=>console.warn('SW error:',e));
+  });
+}
+
+// ─── Offline/Online Detection ───
+function updateOnlineStatus(){
+  const badge=document.getElementById('offline-badge');
+  if(!navigator.onLine){
+    badge.classList.add('show');
+  }else{
+    badge.classList.remove('show');
+    // لو رجع النت — حدّث البيانات
+    autoRefresh();
+  }
+}
+window.addEventListener('online', updateOnlineStatus);
+window.addEventListener('offline', updateOnlineStatus);
+updateOnlineStatus();
+
+// ─── Install Prompt (Android Chrome) ───
+let deferredPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault();
+  deferredPrompt=e;
+  // ما تعرضش البانيل لو سبق وثبّت
+  if(!localStorage.getItem('pwa-installed')){
+    setTimeout(()=>document.getElementById('pwa-banner').classList.add('show'),3000);
+  }
+});
+window.addEventListener('appinstalled',()=>{
+  localStorage.setItem('pwa-installed','1');
+  document.getElementById('pwa-banner').classList.remove('show');
+});
+document.getElementById('pwaInstallBtn').addEventListener('click',async()=>{
+  if(!deferredPrompt) return;
+  deferredPrompt.prompt();
+  const {outcome}=await deferredPrompt.userChoice;
+  if(outcome==='accepted') localStorage.setItem('pwa-installed','1');
+  deferredPrompt=null;
+  document.getElementById('pwa-banner').classList.remove('show');
+});
+function closePwaBanner(){
+  document.getElementById('pwa-banner').classList.remove('show');
+  localStorage.setItem('pwa-dismissed',Date.now());
+}
+
+// ─── Push Notifications ───
+async function requestPushPermission(){
+  if(!('Notification' in window)) return;
+  if(Notification.permission==='default'){
+    const perm=await Notification.requestPermission();
+    if(perm==='granted') showNotif('ري الجيزة','✅ تم تفعيل الإشعارات — ستصلك تنبيهات المناسيب الحرجة');
+  }
+}
+
+function showNotif(title,body,icon='icon-192.png'){
+  if(Notification.permission!=='granted') return;
+  // إرسال عبر Service Worker (يشتغل حتى لو مغلق)
+  if(navigator.serviceWorker.controller){
+    navigator.serviceWorker.controller.postMessage({type:'NOTIFY',title,body,icon});
+  }else{
+    new Notification(title,{body,icon,dir:'rtl',lang:'ar'});
+  }
+}
+
+// فحص المحددات الحرجة وإرسال إشعار لو في خرق
+function checkCriticalAndNotify(){
+  const mm=String(selMonth).padStart(2,'0');
+  const dd=String(selDay).padStart(2,'0');
+  const key=mm+'-'+dd;
+  const rec=DB.lookup[key]?.[CURR];
+  if(!rec||!rec.stations) return;
+  const shift=document.getElementById('shiftLetter').textContent.trim();
+
+  const checks=[
+    {val:rec.stations['حجز أبو رجوان']?.f,   min:21.90, label:'أمام أبو رجوان',  shift:'أ'},
+    {val:rec.stations['حجز الحومدية']?.f,     min:20.90, label:'أمام الحومدية',   shift:'ب'},
+    {val:rec.stations['فم المنصورية']?.f,     min:19.50, label:'أمام المنصورية',  shift:null}, // دائماً
+  ];
+
+  checks.forEach(c=>{
+    if(c.shift&&c.shift!==shift) return; // خاص بدور غير الحالي
+    if(c.val!=null&&c.val<c.min){
+      const last=localStorage.getItem('notif-'+c.label);
+      const now=Date.now();
+      if(!last||now-+last>30*60*1000){ // مرة كل 30 دقيقة بس
+        showNotif('⚠️ تنبيه حرج — ري الجيزة',
+          `${c.label} = ${c.val.toFixed(2)} م — أقل من الحد (${c.min} م)`);
+        localStorage.setItem('notif-'+c.label,now);
+      }
+    }
+  });
+}
+
 /* ══════════ INIT ══════════ */
 Chart.defaults.color='#7a96a8';
 Chart.defaults.borderColor='rgba(0,0,0,.06)';
@@ -1015,6 +1174,14 @@ calcShift();
 goToday();
 window.addEventListener('load',()=>setTimeout(autoRefresh,800));
 setInterval(autoRefresh,10*60*1000);
+// طلب إذن الإشعارات بعد 5 ثواني من فتح التطبيق
+setTimeout(requestPushPermission, 5000);
+// فحص المحددات الحرجة بعد كل تحديث
+const _origAutoRefresh=autoRefresh;
+autoRefresh=async function(){
+  await _origAutoRefresh();
+  checkCriticalAndNotify();
+};
 </script>
 </body>
 </html>
