@@ -1,12 +1,11 @@
 /* ══════════════════════════════════════════
    Service Worker — ري الجيزة PWA
-   استراتيجية: Cache First للأصول الثابتة
-                Network First للبيانات
+   v3 — تحديث إجباري للـ cache
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v2';
-const STATIC_CACHE = 'static-v1';
-const DATA_CACHE   = 'data-v1';
+const CACHE_NAME   = 'ري-الجيزة-v3';
+const STATIC_CACHE = 'static-v3';
+const DATA_CACHE   = 'data-v2';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [
@@ -29,21 +28,24 @@ self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(STATIC_CACHE)
       .then(cache => cache.addAll(STATIC_ASSETS))
-      .then(() => self.skipWaiting())
+      .then(() => self.skipWaiting())   // ← يبدأ فوراً بدون انتظار
       .catch(err => console.warn('Cache install error:', err))
   );
 });
 
-/* ─── Activate ─── */
+/* ─── Activate — يمسح كل الـ cache القديم ─── */
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys().then(keys =>
       Promise.all(
         keys
           .filter(k => k !== STATIC_CACHE && k !== DATA_CACHE)
-          .map(k => caches.delete(k))
+          .map(k => {
+            console.log('Deleting old cache:', k);
+            return caches.delete(k);
+          })
       )
-    ).then(() => self.clients.claim())
+    ).then(() => self.clients.claim())   // ← يتحكم في كل التبويبات المفتوحة فوراً
   );
 });
 
@@ -51,7 +53,7 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = e.request.url;
 
-  // Google Sheets → Network First (بيانات حية)
+  // Google Sheets → Network First (بيانات حية — دايماً من النت)
   if (DATA_URLS.some(u => url.startsWith(u))) {
     e.respondWith(networkFirstStrategy(e.request, DATA_CACHE));
     return;
@@ -69,14 +71,20 @@ self.addEventListener('fetch', e => {
     return;
   }
 
+  // index.html → Network First عشان دايماً يجيب الأحدث
+  if (url.endsWith('/') || url.endsWith('index.html')) {
+    e.respondWith(networkFirstStrategy(e.request, STATIC_CACHE));
+    return;
+  }
+
   // باقي الطلبات → Cache First
   e.respondWith(cacheFirstStrategy(e.request, STATIC_CACHE));
 });
 
 /* ─── Cache First ─── */
 async function cacheFirstStrategy(request, cacheName) {
-  const cache   = await caches.open(cacheName);
-  const cached  = await cache.match(request);
+  const cache  = await caches.open(cacheName);
+  const cached = await cache.match(request);
   if (cached) return cached;
   try {
     const response = await fetch(request);
@@ -163,10 +171,9 @@ self.addEventListener('notificationclick', e => {
   );
 });
 
-/* ─── Background Sync (تحديث في الخلفية) ─── */
+/* ─── Background Sync ─── */
 self.addEventListener('sync', e => {
   if (e.tag === 'background-refresh') {
-    // سيتم التحديث تلقائياً لما يرجع النت
     e.waitUntil(Promise.resolve());
   }
 });
