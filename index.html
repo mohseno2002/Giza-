@@ -12588,20 +12588,6 @@ printStyle.textContent = `
 document.head.appendChild(printStyle);
 
 // ─── RESIZE HANDLER ───────────────────────────────────────────
-window.addEventListener('resize', () => {
-  if (currentCanal) {
-    drawCrossSection(currentCanal);
-    drawProfile(currentCanal);
-  }
-});
-
-// ─── START ────────────────────────────────────────────────────
-init();
-
-// Event delegation للأزرار داخل detail
-document.getElementById('detail').addEventListener('click', e => {
-  if (e.target.closest('#printBtn')) printCanal();
-});
 
 
 /* ══════════ CE PROFILE ADAPTED ══════════ */
