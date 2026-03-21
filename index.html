@@ -1893,12 +1893,13 @@ calcShift();
 goToday();
 window.addEventListener('load',()=>{
   if(isLocalFile()){
-    // إظهار تحذير فوري بدون محاولة فاشلة
     const st=document.getElementById('impStatus');
     showLocalFileError(st);
   } else {
     setTimeout(autoRefresh,800);
   }
+  // تهيئة تبويب الأورنيك الهندسي فوراً
+  setTimeout(initCE, 200);
 });
 setInterval(()=>{if(!isLocalFile())autoRefresh();},10*60*1000);
 // طلب إذن الإشعارات بعد 5 ثواني من فتح التطبيق
@@ -12718,25 +12719,26 @@ let ceProfileCanvas   = null;
 
 // ── Init CE Tab ──
 function initCE() {
-  if (!window.DATA) return;
-  // Build district tabs
+  if (!window.DATA) { console.warn('CE: DATA not loaded'); return; }
   const dtabs = document.getElementById('ceDtabs');
-  if (!dtabs || dtabs.children.length > 0) return;
+  if (!dtabs) return;
   const districts = Object.keys(DATA);
-  // All tab
-  const allTab = document.createElement('div');
-  allTab.className = 'ce-dtab active';
-  allTab.textContent = 'الكل';
-  allTab.onclick = () => { ceSetDistrict(null); document.querySelectorAll('.ce-dtab').forEach(t=>t.classList.remove('active')); allTab.classList.add('active'); };
-  dtabs.appendChild(allTab);
-  districts.forEach(d => {
-    const tab = document.createElement('div');
-    tab.className = 'ce-dtab';
-    const short = d.replace('هندسة رى ','');
-    tab.textContent = short;
-    tab.onclick = () => { ceSetDistrict(d); document.querySelectorAll('.ce-dtab').forEach(t=>t.classList.remove('active')); tab.classList.add('active'); };
-    dtabs.appendChild(tab);
-  });
+  // بناء تاجات الهندسات لو لسه ماتعملتش
+  if (dtabs.children.length === 0) {
+    const allTab = document.createElement('div');
+    allTab.className = 'ce-dtab active';
+    allTab.textContent = 'الكل';
+    allTab.onclick = () => { ceSetDistrict(null); document.querySelectorAll('.ce-dtab').forEach(t=>t.classList.remove('active')); allTab.classList.add('active'); };
+    dtabs.appendChild(allTab);
+    districts.forEach(d => {
+      const tab = document.createElement('div');
+      tab.className = 'ce-dtab';
+      const short = d.replace('هندسة رى ','');
+      tab.textContent = short;
+      tab.onclick = () => { ceSetDistrict(d); document.querySelectorAll('.ce-dtab').forEach(t=>t.classList.remove('active')); tab.classList.add('active'); };
+      dtabs.appendChild(tab);
+    });
+  }
   ceSetDistrict(null);
 }
 
@@ -12979,12 +12981,14 @@ function ceDrawProfile() {
   drawProfileOnCanvas(ceCurrentCanal, canvas);
 }
 
-// ── switchTab update ──
+// ── switchTab update — tab 5 ──
 const _origSwitchTab = switchTab;
 switchTab = function(i) {
   _origSwitchTab(i);
   if (i === 5) {
-    initCE();
+    // تأكد إن القائمة متحملة حتى لو initCE اتعملت قبل
+    const list = document.getElementById('ceList');
+    if (list && list.children.length === 0) ceRenderList('');
   }
 };
 
