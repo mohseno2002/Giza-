@@ -3,9 +3,9 @@
    v3 — تحديث إجباري للـ cache
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v6';
-const STATIC_CACHE = 'static-v6';
-const DATA_CACHE   = 'data-v5';
+const CACHE_NAME   = 'ري-الجيزة-v7';
+const STATIC_CACHE = 'static-v7';
+const DATA_CACHE   = 'data-v6';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [
