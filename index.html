@@ -997,7 +997,10 @@ function getSegForStation(stName) {
   if (!canals) return null;
   const canal = canals.find(c => c.name === link.canal);
   if (!canal) return null;
-  return {seg: canal.segments[link.seg||0], canal};
+  const segIdx = link.seg || 0;
+  const seg = canal.segments[segIdx] || canal.segments[0];
+  if (!seg) return null;
+  return {seg, canal, segIdx};
 }
 
 function manningQ(seg, actualDepth) {
@@ -1045,8 +1048,10 @@ function buildHydraulicCard(stName, actualWL) {
   if (actualWL < mnwl)      rangeNote = ' ↓ أقل من أدنى منسوب';
   else if (actualWL > mxwl) rangeNote = ' ↑ يتجاوز أقصى منسوب';
 
+  const link = STATION_CANAL_MAP[stName];
+  const kmNote = link ? ` — ك${seg.from_k||'فم'}→${seg.to_k||'?'}` : '';
   return '<div class="hyd-card">'
-    + '<div class="hyd-title">🔬 الأداء الهيدروليكي الفعلي — '+linked.canal.name+'</div>'
+    + '<div class="hyd-title">🔬 أداء هيدروليكي فعلي — '+linked.canal.name+' (قسم '+(linked.segIdx+1)+kmNote+')</div>'
     + '<div class="hyd-grid">'
     + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--blue)">'+mActual.A.toFixed(1)+'</div><div class="hyd-val-l">A فعلي م²</div></div>'
     + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--blue)">'+mActual.V.toFixed(3)+'</div><div class="hyd-val-l">V فعلي م/ث</div></div>'
@@ -12738,14 +12743,32 @@ function drawProfileOnCanvas(canal, canvas) {
 /* ══════════ CANAL ENGINEERING INTEGRATION ══════════ */
 
 // ── ربط المحطات بالترع الرئيسية ──
+// ── ربط المحطات بالترع والأقسام بناءً على الكيلومتر الفعلي ──
+// ترغة الجيزة (العياط):  [0]=ك22→36 | [1]=ك36→54 | [2]=ك54→61 | [3]=ك61→63
+// ترعة الجيزة (مزغونة): [0]=ك63→80 | [1]=ك80→88
+// ترعة المنصورية:        [0]=فم→5  | [1]=5→14  | [2]=14→16 | [3]=16→25 | [4]=25→29
 const STATION_CANAL_MAP = {
-  'فم الجيزة':         {canal:'ترعة الجيزة',       district:'هندسة رى الجيزة',    seg:0},
-  'فم المنصورية':      {canal:'ترعة المنصورية',    district:'هندسة رى المنصورية', seg:0},
-  'الرياح الناصري':    {canal:'الرياح الناصرى',     district:'هندسة رى الرياح',    seg:0},
-  'فم الرياح البحيري': {canal:'الرياح البحيرى',    district:'هندسة رى الرياح',    seg:0},
-  'حجز أبو رجوان':    {canal:'ترعة الجيزة',       district:'هندسة رى الجيزة',    seg:0},
-  'حجز الحومدية':     {canal:'ترعة المنصورية',    district:'هندسة رى المنصورية', seg:0},
-  'حجز العياط':       {canal:'ترغة الجيزة',       district:'هندسة رى العياط',    seg:0},
+  // ── فم الجيزة ك0 — أقرب قسم متاح هو قسم[0] من ترغة الجيزة (ك22→36) ──
+  'فم الجيزة':        {canal:'ترغة الجيزة', district:'هندسة رى العياط',    seg:0, note:'تقريبي — بيانات ك0 غير متاحة'},
+  // ── حجز أبو الشقوق ك22 — قسم[0] ك22→36 ──
+  'حجز أبو الشقوق':  {canal:'ترغة الجيزة', district:'هندسة رى العياط',    seg:0},
+  // ── حجز 39 ك39 — قسم[1] ك36→54 ──
+  'حجز 39':           {canal:'ترغة الجيزة', district:'هندسة رى العياط',    seg:1},
+  // ── حجز 48 ك48 — قسم[1] ك36→54 ──
+  'حجز 48':           {canal:'ترغة الجيزة', district:'هندسة رى العياط',    seg:1},
+  // ── حجز العياط ك63 — قسم[3] ك61→63 ──
+  'حجز العياط':       {canal:'ترغة الجيزة', district:'هندسة رى العياط',    seg:3},
+  // ── حجز أبو رجوان ك80 — قسم[0] ك63→80 ──
+  'حجز أبو رجوان':   {canal:'ترعة الجيزة', district:'هندسة رى مزغونة',    seg:0},
+  // ── حجز الحومدية ك88 — قسم[1] ك80→88 ──
+  'حجز الحومدية':    {canal:'ترعة الجيزة', district:'هندسة رى مزغونة',    seg:1},
+  // ── ترعة المنصورية ──
+  'فم المنصورية':    {canal:'ترعة المنصورية', district:'هندسة رى المنصورية', seg:0},
+  'حجز المنشية':     {canal:'ترعة المنصورية', district:'هندسة رى المنصورية', seg:2},
+  'حجز الحواجز':     {canal:'ترعة المنصورية', district:'هندسة رى المنصورية', seg:4},
+  // ── الرياح ──
+  'الرياح الناصري':   {canal:'الرياح الناصرى', district:'هندسة رى الرياح',   seg:0},
+  'فم الرياح البحيري':{canal:'الرياح البحيرى', district:'هندسة رى الرياح',   seg:0},
 };
 
 // ── Manning's equation: Q = A * (1/n) * R^(2/3) * S^(1/2) ──
