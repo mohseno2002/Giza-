@@ -990,7 +990,7 @@ function renderAll(){renderManasib();renderFlows();autoDecision();if(document.ge
 
 /* ══════════ HYDRAULIC LIVE CARD ══════════ */
 function getSegForStation(stName) {
-  if (!window.DATA) return null;
+  if (typeof DATA === 'undefined') return null;
   const link = STATION_CANAL_MAP[stName];
   if (!link) return null;
   const canals = DATA[link.district];
@@ -1006,7 +1006,8 @@ function getSegForStation(stName) {
 function manningQ(seg, actualDepth) {
   if (!seg) return null;
   const bw  = parseFloat(seg.base_width) || 0;
-  const bg  = parseFloat(seg.base_grad)  || 5;
+  const bgRaw = parseFloat(seg.base_grad);
+  const bg  = isNaN(bgRaw) ? 3 : bgRaw;   // افتراضي 3×10⁻⁵ لو القيمة نصية
   const sm  = (seg.side_slope||'1:1').match(/(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)/);
   const z   = sm ? parseFloat(sm[1])/parseFloat(sm[2]) : 1;
   const d   = Math.max(0.05, actualDepth);
@@ -12844,7 +12845,7 @@ let ceProfileCanvas   = null;
 
 // ── Init CE Tab ──
 function initCE() {
-  if (!window.DATA) { console.warn('CE: DATA not loaded'); return; }
+  if (typeof DATA === 'undefined') { console.warn('CE: DATA not loaded'); return; }
   const dtabs = document.getElementById('ceDtabs');
   if (!dtabs) return;
   const districts = Object.keys(DATA);
@@ -13115,7 +13116,7 @@ switchTab = function(i) {
     requestAnimationFrame(() => {
       const list = document.getElementById('ceList');
       if (list && list.children.length === 0) {
-        if (window.DATA) ceRenderList('');
+        if (typeof DATA !== 'undefined') ceRenderList('');
       }
     });
   }
