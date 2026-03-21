@@ -1,11 +1,12 @@
 /* ══════════════════════════════════════════
    Service Worker — ري الجيزة PWA
-   v3 — تحديث إجباري للـ cache
+   v4 — تعديل حسابات مانينج (حجز الحومدية + فم المنصورية)
+   تاريخ: 2026-03-22
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v20';
-const STATIC_CACHE = 'static-v20';
-const DATA_CACHE   = 'data-v19';
+const CACHE_NAME   = 'ري-الجيزة-v21';
+const STATIC_CACHE = 'static-v21';
+const DATA_CACHE   = 'data-v21';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [
