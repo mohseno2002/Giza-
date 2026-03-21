@@ -206,6 +206,37 @@ select{background:var(--card);border:1px solid var(--border2);color:var(--text);
 .sp-calc{width:100%;padding:6px;border:none;border-radius:7px;background:var(--navy);color:#fff;font-weight:700;font-size:11px;cursor:pointer;font-family:'Cairo',sans-serif;}
 .sp-result{margin-top:7px;font-size:10px;background:var(--card2);padding:7px;border-radius:6px;color:var(--text);line-height:1.8;}
 
+/* ═══ MAP NETWORK ═══ */
+.map-wrap{padding:12px 18px 18px;}
+.map-legend{display:flex;gap:12px;flex-wrap:wrap;padding:8px 18px;background:var(--card2);border-bottom:1px solid var(--border);font-size:9px;}
+.map-legend-item{display:flex;align-items:center;gap:5px;font-weight:700;}
+.map-svg-wrap{background:var(--card);border:1.5px solid var(--border2);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);position:relative;}
+.map-svg-wrap svg{width:100%;height:auto;display:block;}
+.map-info-bar{margin-top:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;}
+.map-info-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px 11px;display:flex;align-items:center;gap:9px;box-shadow:var(--shadow);}
+.mic-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0;}
+.mic-name{font-size:10px;font-weight:900;color:var(--navy);}
+.mic-val{font-size:13px;font-weight:900;line-height:1;margin-top:1px;}
+.mic-lbl{font-size:8px;color:var(--text3);}
+
+/* ═══ OEI GAUGE ═══ */
+.oei-wrap{margin-top:8px;padding:8px;background:var(--bg2);border-radius:10px;text-align:center;}
+.oei-title{font-size:9px;color:var(--text2);font-weight:700;margin-bottom:6px;}
+.oei-gauge{position:relative;width:100%;max-width:160px;margin:0 auto;}
+.oei-gauge svg{width:100%;height:auto;}
+.oei-val-wrap{position:absolute;bottom:2px;left:50%;transform:translateX(-50%);text-align:center;white-space:nowrap;}
+.oei-num{font-size:20px;font-weight:900;line-height:1;}
+.oei-lbl{font-size:8px;color:var(--text3);}
+.oei-status{font-size:9px;font-weight:900;margin-top:4px;padding:2px 8px;border-radius:5px;display:inline-block;}
+/* ═══ WEEK COMPARE ═══ */
+.wk-wrap{margin-top:8px;padding:7px 8px;background:var(--bg2);border-radius:9px;}
+.wk-title{font-size:9px;color:var(--text2);font-weight:700;margin-bottom:5px;}
+.wk-row{display:flex;align-items:center;gap:6px;margin-bottom:3px;}
+.wk-name{font-size:8px;color:var(--text3);width:70px;flex-shrink:0;text-align:right;}
+.wk-bar-bg{flex:1;height:6px;background:#e0e0e0;border-radius:3px;overflow:hidden;}
+.wk-bar-fill{height:100%;border-radius:3px;transition:width .4s;}
+.wk-num{font-size:8px;font-weight:900;width:32px;text-align:left;flex-shrink:0;}
+
 /* PRINT */
 .print-date{display:none;}
 @media print{
@@ -292,6 +323,7 @@ footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-to
   <div class="tab" onclick="switchTab(1)">💧 تصرف المغذيات</div>
   <div class="tab" onclick="switchTab(2)">📅 المتوسط الشهري</div>
   <div class="tab" onclick="switchTab(3)">📈 الاتجاه السنوي</div>
+  <div class="tab" onclick="switchTab(4)">🗺️ خريطة الشبكة</div>
 </div>
 
 <div class="picker">
@@ -366,6 +398,26 @@ footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-to
   </div>
 </div>
 
+<!-- TAB 4 — MAP -->
+<div class="section" id="sec4">
+  <div class="map-legend">
+    <div class="map-legend-item"><span style="width:12px;height:12px;border-radius:50%;background:#2e7d32;display:inline-block"></span>مستقر ✅</div>
+    <div class="map-legend-item"><span style="width:12px;height:12px;border-radius:50%;background:#f57f17;display:inline-block"></span>تحذير ⚠️</div>
+    <div class="map-legend-item"><span style="width:12px;height:12px;border-radius:50%;background:#c62828;display:inline-block"></span>حرج 🔴</div>
+    <div class="map-legend-item"><span style="width:12px;height:12px;border-radius:50%;background:#90a4ae;display:inline-block"></span>لا بيانات</div>
+    <span style="margin-right:auto;font-size:9px;color:var(--text3)">انقر على المحطة لعرض التفاصيل</span>
+  </div>
+  <div class="map-wrap">
+    <div class="map-svg-wrap" id="mapSvgWrap">
+      <!-- SVG يُولَّد بالجافاسكريبت -->
+    </div>
+    <div class="map-info-bar" id="mapInfoBar"></div>
+  </div>
+</div>
+
+<!-- MAP TOOLTIP -->
+<div id="mapTooltip" style="display:none;position:fixed;z-index:9998;background:#1a3a5c;color:#fff;padding:8px 12px;border-radius:9px;font-family:'Cairo',sans-serif;font-size:11px;box-shadow:0 4px 16px rgba(0,0,0,.3);pointer-events:none;direction:rtl;min-width:160px;"></div>
+
 <!-- SMART PANEL -->
 <div class="smart-panel" id="smartPanel">
   <div class="sp-hdr" id="spHandle">
@@ -374,7 +426,18 @@ footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-to
   </div>
   <div class="sp-body">
     <div id="spStatus" class="sp-status"></div>
-    <div class="sp-result" id="spResult">جاري التحليل...</div>
+    <!-- OEI Gauge -->
+    <div class="oei-wrap" id="oeiWrap">
+      <div class="oei-title">⚡ مؤشر كفاءة التشغيل OEI</div>
+      <div class="oei-gauge" id="oeiGauge"></div>
+      <div id="oeiStatusLbl" class="oei-status" style="background:#e8f5e9;color:#2e7d32">—</div>
+    </div>
+    <!-- Week Compare -->
+    <div class="wk-wrap" id="wkWrap">
+      <div class="wk-title">📊 مقارنة بمتوسط الأسبوع (7 أيام)</div>
+      <div id="wkContent"></div>
+    </div>
+    <div class="sp-result" id="spResult" style="margin-top:6px">جاري التحليل...</div>
     <button class="sp-calc" onclick="autoDecision()">🔄 إعادة التحليل</button>
   </div>
 </div>
@@ -566,15 +629,85 @@ function rebuildDerived(){
 }
 
 /* ══════════ AUTO REFRESH ══════════ */
+function isLocalFile(){
+  return location.protocol==='file:'||location.protocol==='content:';
+}
+
+function showLocalFileError(st){
+  st.className='imp-status err';
+  st.textContent='⚠️ افتح الملف من GitHub Pages — اضغط للتفاصيل';
+  st.style.cursor='pointer';
+  st.onclick=()=>{
+    const msg=document.getElementById('localFileMsg');
+    if(msg) msg.style.display=msg.style.display==='none'?'block':'none';
+  };
+  // إظهار بانيل الإرشاد
+  let msg=document.getElementById('localFileMsg');
+  if(!msg){
+    msg=document.createElement('div');
+    msg.id='localFileMsg';
+    msg.style.cssText=`
+      position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+      background:#fff;border:2px solid #1a3a5c;border-radius:14px;
+      padding:20px 22px;z-index:99999;width:88%;max-width:360px;
+      box-shadow:0 8px 32px rgba(0,0,0,.25);font-family:'Cairo',sans-serif;
+      direction:rtl;text-align:right;`;
+    msg.innerHTML=`
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <b style="font-size:14px;color:#1a3a5c">⚠️ تعذّر تحميل البيانات</b>
+        <button onclick="document.getElementById('localFileMsg').style.display='none'"
+          style="background:none;border:none;font-size:20px;cursor:pointer;color:#90a4ae">✕</button>
+      </div>
+      <p style="font-size:12px;color:#456070;line-height:1.8;margin-bottom:14px">
+        المتصفح على Android <b>يمنع</b> الاتصال بالإنترنت لما الملف بيُفتح مباشرةً من التنزيلات
+        (<code style="background:#f0f4f8;padding:1px 5px;border-radius:4px">content://</code>).
+      </p>
+      <div style="background:#e8f5e9;border-radius:9px;padding:12px;margin-bottom:12px">
+        <b style="font-size:11px;color:#2e7d32">✅ الحل — ارفع الملف على GitHub:</b>
+        <ol style="font-size:11px;color:#1b5e20;margin-top:6px;padding-right:16px;line-height:2">
+          <li>افتح <b>github.com/mohseno2002/giza-irrigation</b></li>
+          <li>ارفع <b>index.html</b> فوق النسخة القديمة</li>
+          <li>افتح الرابط: <b>mohseno2002.github.io/giza-irrigation</b></li>
+        </ol>
+      </div>
+      <div style="background:#e3f2fd;border-radius:9px;padding:10px;margin-bottom:14px">
+        <b style="font-size:11px;color:#1565c0">📱 بديل سريع — من Chrome على الموبايل:</b>
+        <p style="font-size:11px;color:#0d47a1;margin-top:4px;line-height:1.8">
+          اضغط ⋮ ← "مشاركة" ← "فتح في المتصفح"<br>
+          <span style="opacity:.7">(ممكن يشتغل على بعض الأجهزة)</span>
+        </p>
+      </div>
+      <button onclick="document.getElementById('localFileMsg').style.display='none'"
+        style="width:100%;padding:9px;background:#1a3a5c;color:#fff;border:none;border-radius:8px;
+        font-family:'Cairo',sans-serif;font-size:13px;font-weight:700;cursor:pointer">
+        حسناً، فهمت
+      </button>`;
+    document.body.appendChild(msg);
+  }
+  msg.style.display='block';
+}
+
 async function autoRefresh(){
   const st=document.getElementById('impStatus');
   st.className='imp-status';
   st.textContent='🔄 جاري جلب المناسيب...';
+  st.style.cursor='default';
+  st.onclick=null;
+
+  // كشف الفتح من ملف محلي قبل أي محاولة
+  if(isLocalFile()){
+    showLocalFileError(st);
+    return;
+  }
+
   try{
     const mRows=await fetchSheet(MANASIB_ID,MANASIB_GID);
     processManasib(mRows);
     st.textContent=`✅ المناسيب (${mRows.length} صف) — جاري التصرفات...`;
   }catch(e){
+    // كشف تأخر الـ fetch بسبب CORS أو block
+    const isNetworkErr=e.message.includes('Failed to fetch')||e.message.includes('NetworkError')||e.message.includes('Load failed');
+    if(isNetworkErr&&isLocalFile()){showLocalFileError(st);return;}
     st.textContent='❌ خطأ في المناسيب: '+e.message;
     st.className='imp-status err';return;
   }
@@ -588,6 +721,8 @@ async function autoRefresh(){
     st.textContent=`✅ تم التحديث — ${now}`;
     st.className='imp-status ok';
   }catch(e){
+    const isNetworkErr=e.message.includes('Failed to fetch')||e.message.includes('NetworkError')||e.message.includes('Load failed');
+    if(isNetworkErr&&isLocalFile()){showLocalFileError(st);return;}
     st.textContent='❌ خطأ في التصرفات: '+e.message;
     st.className='imp-status err';
   }
@@ -599,6 +734,7 @@ function switchTab(i){
   document.querySelectorAll('.section').forEach((s,j)=>s.classList.toggle('active',i===j));
   if(i===2) renderMonthlyAvg();
   if(i===3) renderTrend();
+  if(i===4) renderNetworkMap();
 }
 
 let selMonth=3,selDay=20;
@@ -627,7 +763,7 @@ function dcls(v){return v==null?'neu':v>0?'up':v<0?'dn':'neu';}
 function dsign(v,d=2){if(v==null)return'—';return(v>0?'+':'')+v.toFixed(d);}
 
 /* ══════════ RENDER ALL ══════════ */
-function renderAll(){renderManasib();renderFlows();autoDecision();}
+function renderAll(){renderManasib();renderFlows();autoDecision();if(document.getElementById('sec4').classList.contains('active'))renderNetworkMap();}
 
 /* ══════════ RENDER MANASIB ══════════ */
 function renderManasib(){
@@ -883,6 +1019,281 @@ function toggleSP(){
 })();
 
 
+/* ══════════ NETWORK MAP ══════════ */
+// تعريف المحطات بمواضعها على SVG (x,y) — نسب من 0-1000 × 600
+const MAP_NODES=[
+  {id:'فم الجيزة',        x:500,y:50,  type:'fom',  label:'فم الجيزة',       side:'f'},
+  {id:'حجز أبو الشقوق',  x:500,y:130, type:'hajz', label:'أبو الشقوق',      side:'f'},
+  {id:'حجز 39',           x:380,y:210, type:'hajz', label:'حجز 39',          side:'f'},
+  {id:'حجز 48',           x:500,y:210, type:'hajz', label:'حجز 48',          side:'f'},
+  {id:'حجز العياط',       x:620,y:210, type:'hajz', label:'العياط',          side:'f'},
+  {id:'حجز أبو رجوان',   x:500,y:300, type:'hajz', label:'أبو رجوان',       side:'f', critical:true, min:21.90},
+  {id:'حجز الحومدية',    x:500,y:390, type:'hajz', label:'الحومدية',        side:'f', critical:true, min:20.90},
+  {id:'فم المنصورية',    x:500,y:470, type:'fom',  label:'المنصورية',       side:'f', critical:true, min:19.50},
+  {id:'حجز المنشية',     x:360,y:470, type:'hajz', label:'المنشية',         side:'f'},
+  {id:'حجز الحواجز',     x:650,y:470, type:'hajz', label:'الحواجز',         side:'f'},
+  {id:'فم الرياح البحيري',x:280,y:550, type:'fom',  label:'الرياح البحيري', side:'f'},
+  {id:'الرياح الناصري',  x:500,y:560, type:'hajz', label:'الناصري',         side:'f'},
+  {id:'حجز الخطاطبة',   x:720,y:550, type:'hajz', label:'الخطاطبة',        side:'f'},
+];
+
+// الروابط (edges) بين المحطات
+const MAP_EDGES=[
+  ['فم الجيزة','حجز أبو الشقوق'],
+  ['حجز أبو الشقوق','حجز 39'],
+  ['حجز أبو الشقوق','حجز 48'],
+  ['حجز أبو الشقوق','حجز العياط'],
+  ['حجز 39','حجز أبو رجوان'],
+  ['حجز 48','حجز أبو رجوان'],
+  ['حجز العياط','حجز أبو رجوان'],
+  ['حجز أبو رجوان','حجز الحومدية'],
+  ['حجز الحومدية','فم المنصورية'],
+  ['حجز الحومدية','حجز المنشية'],
+  ['حجز الحومدية','حجز الحواجز'],
+  ['فم المنصورية','فم الرياح البحيري'],
+  ['فم المنصورية','الرياح الناصري'],
+  ['فم المنصورية','حجز الخطاطبة'],
+];
+
+function nodeColor(node, rec){
+  if(!rec||!rec.stations) return {fill:'#90a4ae',stroke:'#78909c',text:'#fff',status:'nodata'};
+  const v = node.side==='f' ? rec.stations[node.id]?.f : rec.stations[node.id]?.b;
+  if(v==null) return {fill:'#90a4ae',stroke:'#78909c',text:'#fff',status:'nodata'};
+  if(node.critical && node.min!=null){
+    if(v < node.min) return {fill:'#c62828',stroke:'#b71c1c',text:'#fff',status:'critical',val:v};
+    if(v < node.min+0.10) return {fill:'#f57f17',stroke:'#e65100',text:'#fff',status:'warn',val:v};
+    return {fill:'#2e7d32',stroke:'#1b5e20',text:'#fff',status:'ok',val:v};
+  }
+  return {fill:'#1565c0',stroke:'#0d47a1',text:'#fff',status:'info',val:v};
+}
+
+function renderNetworkMap(){
+  const mm=String(selMonth).padStart(2,'0');
+  const dd=String(selDay).padStart(2,'0');
+  const key=mm+'-'+dd;
+  const rec=DB.lookup[key]?.[CURR];
+
+  const W=1000, H=620;
+  // Build edges SVG
+  let edgeSVG='';
+  MAP_EDGES.forEach(([a,b])=>{
+    const na=MAP_NODES.find(n=>n.id===a);
+    const nb=MAP_NODES.find(n=>n.id===b);
+    if(!na||!nb) return;
+    const ca=nodeColor(na,rec);
+    const isAlert=ca.status==='critical'||ca.status==='warn';
+    edgeSVG+=`<line x1="${na.x}" y1="${na.y}" x2="${nb.x}" y2="${nb.y}"
+      stroke="${isAlert?ca.fill:'#b0bec5'}" stroke-width="${isAlert?2.5:1.5}"
+      stroke-dasharray="${isAlert?'6,3':''}" opacity="0.7"/>`;
+  });
+
+  // Build nodes SVG
+  let nodeSVG='';
+  MAP_NODES.forEach(n=>{
+    const c=nodeColor(n,rec);
+    const r = n.type==='fom'?22:18;
+    const pulse = c.status==='critical' ?
+      `<circle cx="${n.x}" cy="${n.y}" r="${r+8}" fill="${c.fill}" opacity="0.2">
+        <animate attributeName="r" values="${r+4};${r+12};${r+4}" dur="1.5s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0.3;0;0.3" dur="1.5s" repeatCount="indefinite"/>
+      </circle>` : '';
+    const valStr = c.val!=null ? c.val.toFixed(2) : '—';
+    const critBadge = n.critical ? `<circle cx="${n.x+r-4}" cy="${n.y-r+4}" r="5" fill="#fff176" stroke="#f9a825" stroke-width="1"/>
+      <text x="${n.x+r-4}" y="${n.y-r+8}" text-anchor="middle" font-size="7" fill="#e65100" font-weight="900">!</text>` : '';
+    nodeSVG+=`<g class="map-node" data-id="${n.id}" style="cursor:pointer" onclick="mapNodeClick('${n.id}')">
+      ${pulse}
+      <circle cx="${n.x}" cy="${n.y}" r="${r}" fill="${c.fill}" stroke="${c.stroke}" stroke-width="2.5" filter="url(#nodeShadow)"/>
+      ${critBadge}
+      <text x="${n.x}" y="${n.y-3}" text-anchor="middle" font-family="Cairo,sans-serif" font-size="${n.type==='fom'?10:9}" fill="${c.text}" font-weight="900">${n.label}</text>
+      <text x="${n.x}" y="${n.y+10}" text-anchor="middle" font-family="Cairo,sans-serif" font-size="9" fill="${c.text}" font-weight="700">${valStr}</text>
+    </g>`;
+  });
+
+  // Water flow animation path (النيل → الجيزة)
+  const flowAnim=`<path d="M500,10 L500,50" stroke="#42a5f5" stroke-width="3" fill="none" stroke-dasharray="6,3" opacity="0.6">
+    <animate attributeName="stroke-dashoffset" values="18;0" dur="1s" repeatCount="indefinite"/>
+  </path>
+  <text x="560" y="35" font-family="Cairo,sans-serif" font-size="9" fill="#42a5f5" opacity="0.8">⬇ تدفق النيل</text>`;
+
+  const svg=`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="nodeShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="rgba(0,0,0,0.25)"/>
+    </filter>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e8f4fd"/>
+      <stop offset="100%" stop-color="#f0f4f8"/>
+    </linearGradient>
+  </defs>
+  <rect width="${W}" height="${H}" fill="url(#bgGrad)"/>
+  <!-- Grid lines subtle -->
+  ${[100,200,300,400,500].map(y=>`<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="#dde6ee" stroke-width="1" stroke-dasharray="4,6"/>`).join('')}
+  <!-- Title -->
+  <text x="500" y="595" text-anchor="middle" font-family="Cairo,sans-serif" font-size="11" fill="#90a4ae">شبكة ري الجيزة — ${selDay} ${MONTHS[selMonth]} ${CURR}</text>
+  ${flowAnim}
+  ${edgeSVG}
+  ${nodeSVG}
+</svg>`;
+
+  document.getElementById('mapSvgWrap').innerHTML=svg;
+
+  // Info cards below map
+  const critNodes=MAP_NODES.filter(n=>n.critical);
+  const bar=document.getElementById('mapInfoBar');
+  bar.innerHTML='';
+  critNodes.forEach(n=>{
+    const c=nodeColor(n,rec);
+    const statusMap={ok:'مستقر ✅',warn:'تحذير ⚠️',critical:'حرج 🔴',nodata:'لا بيانات',info:'طبيعي'};
+    const textCol={ok:'#2e7d32',warn:'#e65100',critical:'#c62828',nodata:'#90a4ae',info:'#1565c0'};
+    const card=document.createElement('div');
+    card.className='map-info-card';
+    card.innerHTML=`<div class="mic-dot" style="background:${c.fill}"></div>
+      <div>
+        <div class="mic-name">${n.label}</div>
+        <div class="mic-val" style="color:${textCol[c.status]||'#333'}">${c.val!=null?c.val.toFixed(2)+' م':'—'}</div>
+        <div class="mic-lbl">${statusMap[c.status]||'—'} ${n.min?'| حد: '+n.min.toFixed(2)+' م':''}</div>
+      </div>`;
+    bar.appendChild(card);
+  });
+}
+
+function mapNodeClick(id){
+  const mm=String(selMonth).padStart(2,'0');
+  const dd=String(selDay).padStart(2,'0');
+  const key=mm+'-'+dd;
+  const rec=DB.lookup[key]?.[CURR];
+  const node=MAP_NODES.find(n=>n.id===id);
+  if(!node) return;
+  const st=rec?.stations?.[id]||{};
+  const fv=st.f!=null?st.f.toFixed(2)+'م':'—';
+  const bv=st.b!=null?st.b.toFixed(2)+'م':'—';
+  const dv=st.d!=null?(st.d>0?'+':'')+st.d.toFixed(2)+'م':'—';
+  const tip=document.getElementById('mapTooltip');
+  tip.innerHTML=`<b style="font-size:12px">🔒 ${id}</b><br>
+    أمام: <b>${fv}</b> | خلف: <b>${bv}</b><br>
+    فارق: <b>${dv}</b>${node.critical?'<br><span style="color:#ffcc80;font-size:9px">⭐ محدد حرج — الحد الأدنى: '+node.min.toFixed(2)+' م</span>':''}`;
+  tip.style.display='block';
+  // Position near center
+  const svg=document.getElementById('mapSvgWrap');
+  const rect=svg.getBoundingClientRect();
+  tip.style.left=Math.min(rect.left+rect.width/2-80, window.innerWidth-200)+'px';
+  tip.style.top=(rect.top+80)+'px';
+  setTimeout(()=>tip.style.display='none',3500);
+}
+document.addEventListener('click',e=>{if(!e.target.closest('.map-node')&&!e.target.closest('#mapTooltip'))document.getElementById('mapTooltip').style.display='none';});
+
+/* ══════════ OEI GAUGE ══════════ */
+// مؤشر كفاءة التشغيل:
+// يُحسب من نسبة المحطات الحرجة المستوفاة × 60% + نسبة استقرار التصرف × 40%
+function calcOEI(rec){
+  if(!rec||!rec.stations) return null;
+  const critNodes=MAP_NODES.filter(n=>n.critical);
+  let okCount=0, totalCrit=0;
+  critNodes.forEach(n=>{
+    const v=n.side==='f'?rec.stations[n.id]?.f:rec.stations[n.id]?.b;
+    if(v!=null){totalCrit++;if(v>=n.min)okCount++;}
+  });
+  const critScore=totalCrit>0?okCount/totalCrit:1;
+  // تصرف: بين 1.5 و 3 ميجا متر مكعب = 100%
+  const flow=rec.flows?.['__total__'];
+  let flowScore=0.5;
+  if(flow!=null){
+    if(flow>=1.5&&flow<=3) flowScore=1;
+    else if(flow<1.5) flowScore=Math.max(0,flow/1.5);
+    else flowScore=Math.max(0,1-(flow-3)/3);
+  }
+  return Math.round((critScore*0.6+flowScore*0.4)*100);
+}
+
+function renderOEIGauge(score){
+  const wrap=document.getElementById('oeiGauge');
+  const lbl=document.getElementById('oeiStatusLbl');
+  if(score==null){wrap.innerHTML='<p style="font-size:9px;color:#90a4ae;padding:10px">لا توجد بيانات</p>';return;}
+  // Arc gauge — نصف دائرة
+  const R=70, cx=90, cy=85, strokeW=14;
+  const circumference=Math.PI*R; // نصف دائرة
+  const progress=Math.min(1,Math.max(0,score/100));
+  const offset=circumference*(1-progress);
+  // لون حسب النتيجة
+  let col='#2e7d32',statusTxt='ممتاز',statusBg='#e8f5e9',statusCol='#2e7d32';
+  if(score<50){col='#c62828';statusTxt='حرج';statusBg='#ffebee';statusCol='#c62828';}
+  else if(score<70){col='#f57f17';statusTxt='متوسط';statusBg='#fff8e1';statusCol='#e65100';}
+  else if(score<85){col='#1565c0';statusTxt='جيد';statusBg='#e3f2fd';statusCol='#1565c0';}
+  // ألوان التدرج للقوس الخلفي
+  // حساب الإبرة مسبقاً بدون template literal متداخل
+  const needleAngle = -180 + progress * 180;
+  const needleRad = needleAngle * Math.PI / 180;
+  const nx = (cx + R * 0.72 * Math.cos(needleRad)).toFixed(1);
+  const ny = (cy + R * 0.72 * Math.sin(needleRad)).toFixed(1);
+  const needleSVG = '<line x1="'+cx+'" y1="'+cy+'" x2="'+nx+'" y2="'+ny+'" stroke="'+col+'" stroke-width="3" stroke-linecap="round"/>'
+    + '<circle cx="'+cx+'" cy="'+cy+'" r="5" fill="'+col+'" stroke="#fff" stroke-width="1.5"/>';
+
+  wrap.innerHTML='<svg viewBox="0 0 180 100" xmlns="http://www.w3.org/2000/svg">'
+    + '<defs><linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">'
+    + '<stop offset="0%" stop-color="#c62828"/>'
+    + '<stop offset="50%" stop-color="#f57f17"/>'
+    + '<stop offset="100%" stop-color="#2e7d32"/>'
+    + '</linearGradient></defs>'
+    + '<path d="M'+(cx-R)+','+cy+' A'+R+','+R+' 0 0,1 '+(cx+R)+','+cy+'" fill="none" stroke="#e0e0e0" stroke-width="'+strokeW+'" stroke-linecap="round"/>'
+    + '<path d="M'+(cx-R)+','+cy+' A'+R+','+R+' 0 0,1 '+(cx+R)+','+cy+'" fill="none" stroke="url(#gaugeGrad)" stroke-width="'+strokeW+'" stroke-linecap="round" stroke-dasharray="'+circumference+'" stroke-dashoffset="'+offset+'" style="transition:stroke-dashoffset 0.8s ease"/>'
+    + needleSVG
+    + '<text x="'+(cx-R-2)+'" y="'+(cy+14)+'" text-anchor="middle" font-family="Cairo" font-size="9" fill="#90a4ae">0</text>'
+    + '<text x="'+cx+'" y="'+(cy-R-4)+'" text-anchor="middle" font-family="Cairo" font-size="9" fill="#90a4ae">50</text>'
+    + '<text x="'+(cx+R+2)+'" y="'+(cy+14)+'" text-anchor="middle" font-family="Cairo" font-size="9" fill="#90a4ae">100</text>'
+    + '<text x="'+cx+'" y="'+(cy+6)+'" text-anchor="middle" font-family="Cairo" font-size="22" font-weight="900" fill="'+col+'">'+score+'</text>'
+    + '<text x="'+cx+'" y="'+(cy+18)+'" text-anchor="middle" font-family="Cairo" font-size="8" fill="#90a4ae">OEI %</text>'
+    + '</svg>';
+  lbl.textContent=statusTxt;
+  lbl.style.background=statusBg;lbl.style.color=statusCol;
+}
+
+/* ══════════ WEEK COMPARE ══════════ */
+function renderWeekCompare(rec){
+  const wrap=document.getElementById('wkContent');
+  if(!rec||!rec.stations){wrap.innerHTML='<span style="font-size:9px;color:#90a4ae">لا توجد بيانات</span>';return;}
+  // حساب متوسط آخر 7 أيام من السنة الحالية
+  const critSts=[
+    {id:'حجز أبو رجوان',label:'أبو رجوان',side:'f',min:21.90},
+    {id:'حجز الحومدية',label:'الحومدية',side:'f',min:20.90},
+    {id:'فم المنصورية',label:'المنصورية',side:'f',min:19.50},
+  ];
+  let html='';
+  critSts.forEach(st=>{
+    const todayVal=st.side==='f'?rec.stations[st.id]?.f:rec.stations[st.id]?.b;
+    // جمع قيم آخر 7 أيام
+    const vals=[];
+    for(let i=1;i<=7;i++){
+      const d=new Date(CURR,selMonth-1,selDay-i);
+      const mo=String(d.getMonth()+1).padStart(2,'0');
+      const dy=String(d.getDate()).padStart(2,'0');
+      const k=mo+'-'+dy;
+      const v=DB.lookup[k]?.[CURR]?.stations?.[st.id];
+      const fv=v?.(st.side==='f'?v.f:v.b):null;
+      if(fv!=null) vals.push(fv);
+    }
+    const avg=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null;
+    const todayStr=todayVal!=null?todayVal.toFixed(2)+'م':'—';
+    const avgStr=avg!=null?avg.toFixed(2)+'م':'—';
+    const diff=todayVal!=null&&avg!=null?todayVal-avg:null;
+    const diffStr=diff!=null?(diff>=0?'+':'')+diff.toFixed(2)+'م':'';
+    const diffCol=diff==null?'#90a4ae':diff>0?'#2e7d32':'#c62828';
+    // بار بناءً على نسبة القيمة من المدى المتوقع
+    const barMax=st.min+2;
+    const barPct=todayVal!=null?Math.min(100,Math.max(0,(todayVal-st.min+0.5)/(barMax-st.min+0.5)*100)):0;
+    const barCol=todayVal==null?'#90a4ae':todayVal>=st.min?'#2e7d32':'#c62828';
+    html+=`<div class="wk-row">
+      <span class="wk-name">${st.label}</span>
+      <div class="wk-bar-bg"><div class="wk-bar-fill" style="width:${barPct}%;background:${barCol}"></div></div>
+      <span class="wk-num" style="color:${barCol}">${todayStr}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:0 0 5px 0;margin-top:-2px">
+      <span style="font-size:8px;color:#90a4ae;padding-right:76px">متوسط الأسبوع: ${avgStr}</span>
+      <span style="font-size:8px;font-weight:900;color:${diffCol};padding-left:36px">${diffStr}</span>
+    </div>`;
+  });
+  wrap.innerHTML=html||'<span style="font-size:9px;color:#90a4ae">لا توجد بيانات</span>';
+}
+
 /* ══════════ SMART PANEL — AUTO DECISION ══════════ */
 // تعريف محاور كل دور
 const SHIFT_ZONES={
@@ -950,6 +1361,8 @@ function autoDecision(){
   if(!rec||!rec.stations){
     st.className='sp-status warn';st.textContent='⚠️ لا توجد بيانات';
     r.innerHTML='<span style="color:var(--text3);font-size:10px">لا توجد بيانات لهذا اليوم.<br>اضغط "تحديث من Sheets" أولاً.</span>';
+    renderOEIGauge(null);
+    renderWeekCompare(null);
     return;
   }
 
@@ -1051,6 +1464,11 @@ function autoDecision(){
       ✅ لا يوجد تدخل مطلوب — استمر على نفس الإعداد
     </div>`;
   }
+
+  // ━━ OEI + Week Compare ━━
+  const oeiScore=calcOEI(rec);
+  renderOEIGauge(oeiScore);
+  renderWeekCompare(rec);
 
   r.innerHTML=html;
 }
@@ -1172,8 +1590,16 @@ initSelects();
 initTrendItems();
 calcShift();
 goToday();
-window.addEventListener('load',()=>setTimeout(autoRefresh,800));
-setInterval(autoRefresh,10*60*1000);
+window.addEventListener('load',()=>{
+  if(isLocalFile()){
+    // إظهار تحذير فوري بدون محاولة فاشلة
+    const st=document.getElementById('impStatus');
+    showLocalFileError(st);
+  } else {
+    setTimeout(autoRefresh,800);
+  }
+});
+setInterval(()=>{if(!isLocalFile())autoRefresh();},10*60*1000);
 // طلب إذن الإشعارات بعد 5 ثواني من فتح التطبيق
 setTimeout(requestPushPermission, 5000);
 // فحص المحددات الحرجة بعد كل تحديث
