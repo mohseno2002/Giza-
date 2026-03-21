@@ -1003,11 +1003,27 @@ function getSegForStation(stName) {
   return {seg, canal, segIdx};
 }
 
-function manningQ(seg, actualDepth) {
+// ── معامل n مانينج حسب نوع الترعة ──
+// الترع الترابية الكبيرة (الرياحات) = 0.033
+// باقي الترع الترابية المتوسطة     = 0.028
+// الافتراضي (ترع صغيرة / مبطّنة)   = 0.025
+const MANNING_N = {
+  'الرياح الناصرى':  0.033,
+  'الرياح البحيرى':  0.033,
+  'ترعة الجيزة':     0.028,
+  'ترغة الجيزة':     0.028,
+  'ترعة المنصورية':  0.028,
+};
+
+function getManningN(canalName) {
+  return MANNING_N[canalName] || 0.025;
+}
+
+function manningQ(seg, actualDepth, canalName) {
   if (!seg) return null;
   const bw  = parseFloat(seg.base_width) || 0;
   const bgRaw = parseFloat(seg.base_grad);
-  const bg  = isNaN(bgRaw) ? 3 : bgRaw;   // افتراضي 3×10⁻⁵ لو القيمة نصية
+  const bg  = isNaN(bgRaw) ? 3 : bgRaw;
   const sm  = (seg.side_slope||'1:1').match(/(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)/);
   const z   = sm ? parseFloat(sm[1])/parseFloat(sm[2]) : 1;
   const d   = Math.max(0.05, actualDepth);
@@ -1015,61 +1031,64 @@ function manningQ(seg, actualDepth) {
   const P   = bw + 2*d * Math.sqrt(1 + z*z);
   const R   = A / P;
   const S   = bg / 100000;
-  const V   = (1/0.025) * Math.pow(R, 2/3) * Math.pow(S, 0.5);
-  return { Q: A*V, A, V, R, d };
+  const n   = getManningN(canalName);   // ← حسب نوع الترعة
+  const V   = (1/n) * Math.pow(R, 2/3) * Math.pow(S, 0.5);
+  return { Q: A*V, A, V, R, d, n };
 }
 
-function buildHydraulicCard(stName, actualWL) {
+function buildHydraulicCard(stName, actualWL_back, actualWL_front) {
+  // actualWL_back  = منسوب خلف الحجز — عمق المياه داخل الترعة (للحساب)
+  // actualWL_front = منسوب أمام الحجز — للمعلومية فقط
   const linked = getSegForStation(stName);
-  if (!linked || actualWL == null) return '';
-  const {seg} = linked;
-  const bl    = parseFloat(seg.base_level) || 0;
-  const mxwl  = parseFloat(seg.max_wl)    || bl+2;
-  const mnwl  = parseFloat(seg.min_wl)    || bl+1;
-
-  const dActual  = actualWL - bl;
-  const dDesign  = mxwl - bl;
+  if (!linked || actualWL_back == null) return '';
+  const {seg, segIdx} = linked;
+  const bl   = parseFloat(seg.base_level) || 0;
+  const mxwl = parseFloat(seg.max_wl)    || bl+2;
+  const mnwl = parseFloat(seg.min_wl)    || bl+1;
+  const dActual = actualWL_back - bl;
+  const dDesign = mxwl - bl;
   if (dActual <= 0) return '';
-
-  const mActual  = manningQ(seg, dActual);
-  const mDesign  = manningQ(seg, dDesign);
+  const mActual = manningQ(seg, dActual, linked.canal.name);
+  const mDesign = manningQ(seg, dDesign, linked.canal.name);
   if (!mActual || !mDesign) return '';
-
   const util     = Math.min(120, mActual.Q / mDesign.Q * 100);
   const utilDisp = Math.min(100, util);
-  const barCol   = util > 90 ? '#c62828' : util > 60 ? '#00796b' : util > 30 ? '#f57f17' : '#c62828';
+  const barCol   = util > 90 ? '#c62828' : util > 55 ? '#00796b' : util > 25 ? '#f57f17' : '#c62828';
   let statusCls, statusTxt;
-  if (util > 90)       { statusCls='warn'; statusTxt='⚠️ قريب من الطاقة القصوى'; }
-  else if (util > 55)  { statusCls='ok';   statusTxt='✅ تشغيل ضمن النطاق الأمثل'; }
-  else if (util > 25)  { statusCls='warn'; statusTxt='⚡ استغلال متوسط — دون المستوى'; }
-  else                 { statusCls='low';  statusTxt='🔴 استغلال ضعيف — المياه منخفضة'; }
-
-  // Check vs design range
+  if (util > 90)      { statusCls='warn'; statusTxt='\u26a0\ufe0f \u0642\u0631\u064a\u0628 \u0645\u0646 \u0627\u0644\u0637\u0627\u0642\u0629 \u0627\u0644\u0642\u0635\u0648\u0649'; }
+  else if (util > 55) { statusCls='ok';   statusTxt='\u2705 \u062a\u0634\u063a\u064a\u0644 \u0636\u0645\u0646 \u0627\u0644\u0646\u0637\u0627\u0642 \u0627\u0644\u0623\u0645\u062b\u0644'; }
+  else if (util > 25) { statusCls='warn'; statusTxt='\u26a1 \u0627\u0633\u062a\u063a\u0644\u0627\u0644 \u0645\u062a\u0648\u0633\u0637 \u2014 \u062f\u0648\u0646 \u0627\u0644\u0645\u0633\u062a\u0648\u0649'; }
+  else                { statusCls='low';  statusTxt='\ud83d\udd34 \u0627\u0633\u062a\u063a\u0644\u0627\u0644 \u0636\u0639\u064a\u0641 \u2014 \u0627\u0644\u0645\u064a\u0627\u0647 \u0645\u0646\u062e\u0641\u0636\u0629'; }
   let rangeNote = '';
-  if (actualWL < mnwl)      rangeNote = ' ↓ أقل من أدنى منسوب';
-  else if (actualWL > mxwl) rangeNote = ' ↑ يتجاوز أقصى منسوب';
-
-  const link = STATION_CANAL_MAP[stName];
-  const kmNote = link ? ` — ك${seg.from_k||'فم'}→${seg.to_k||'?'}` : '';
+  if (actualWL_back < mnwl)      rangeNote = ' \u2014 \u2193 \u0623\u0642\u0644 \u0645\u0646 \u0623\u062f\u0646\u0649 \u0645\u0646\u0633\u0648\u0628';
+  else if (actualWL_back > mxwl) rangeNote = ' \u2014 \u2191 \u064a\u062a\u062c\u0627\u0648\u0632 \u0623\u0642\u0635\u0649 \u0645\u0646\u0633\u0648\u0628';
+  const kmNote = (seg.from_k != null) ? ' \u0643'+(seg.from_k||'\u0641\u0645')+'\u2192'+seg.to_k : '';
+  const levelsRow = actualWL_front != null
+    ? '<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text2);background:var(--bg2);border-radius:6px;padding:4px 8px;margin-bottom:6px">'
+      + '<span>\u0623\u0645\u0627\u0645: <b style="color:var(--blue)">'+actualWL_front.toFixed(2)+' \u0645</b></span>'
+      + '<span>\u062e\u0644\u0641: <b style="color:var(--teal)">'+actualWL_back.toFixed(2)+' \u0645</b> \u2190 \u0644\u0644\u062d\u0633\u0627\u0628</span>'
+      + '</div>'
+    : '';
   return '<div class="hyd-card">'
-    + '<div class="hyd-title">🔬 أداء هيدروليكي فعلي — '+linked.canal.name+' (قسم '+(linked.segIdx+1)+kmNote+')</div>'
+    + '<div class="hyd-title">\ud83d\udd2c \u0623\u062f\u0627\u0621 \u0647\u064a\u062f\u0631\u0648\u0644\u064a\u0643\u064a \u0641\u0639\u0644\u064a \u2014 '+linked.canal.name+kmNote+'</div>'
+    + levelsRow
     + '<div class="hyd-grid">'
-    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--blue)">'+mActual.A.toFixed(1)+'</div><div class="hyd-val-l">A فعلي م²</div></div>'
-    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--blue)">'+mActual.V.toFixed(3)+'</div><div class="hyd-val-l">V فعلي م/ث</div></div>'
-    + '<div class="hyd-val hi"><div class="hyd-val-n" style="color:var(--teal)">'+mActual.Q.toFixed(2)+'</div><div class="hyd-val-l">Q فعلي م³/ث</div></div>'
-    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--text2)">'+mDesign.Q.toFixed(2)+'</div><div class="hyd-val-l">Q تصميمي م³/ث</div></div>'
-    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--text2)">'+dActual.toFixed(2)+'</div><div class="hyd-val-l">عمق فعلي م</div></div>'
-    + '<div class="hyd-val hi"><div class="hyd-val-n" style="color:'+barCol+'">'+util.toFixed(1)+'%</div><div class="hyd-val-l">استغلال Q</div></div>'
+    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--blue)">'+mActual.A.toFixed(1)+'</div><div class="hyd-val-l">A \u0641\u0639\u0644\u064a \u0645\u00b2</div></div>'
+    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--blue)">'+mActual.V.toFixed(3)+'</div><div class="hyd-val-l">V \u0645/\u062b | n='+mActual.n+'</div></div>'
+    + '<div class="hyd-val hi"><div class="hyd-val-n" style="color:var(--teal)">'+mActual.Q.toFixed(2)+'</div><div class="hyd-val-l">Q \u0641\u0639\u0644\u064a \u0645\u00b3/\u062b</div></div>'
+    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--text2)">'+mDesign.Q.toFixed(2)+'</div><div class="hyd-val-l">Q \u062a\u0635\u0645\u064a\u0645\u064a \u0645\u00b3/\u062b</div></div>'
+    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--text2)">'+dActual.toFixed(2)+'</div><div class="hyd-val-l">\u0639\u0645\u0642 \u0641\u0639\u0644\u064a \u0645</div></div>'
+    + '<div class="hyd-val hi"><div class="hyd-val-n" style="color:'+barCol+'">'+util.toFixed(1)+'%</div><div class="hyd-val-l">\u0627\u0633\u062a\u063a\u0644\u0627\u0644 Q</div></div>'
     + '</div>'
     + '<div class="hyd-util">'
-    + '<div class="hyd-util-lbl"><span>Q فعلي / Q تصميمي</span><span style="color:'+barCol+';font-weight:900">'+util.toFixed(1)+'%</span></div>'
+    + '<div class="hyd-util-lbl"><span>Q \u0641\u0639\u0644\u064a / Q \u062a\u0635\u0645\u064a\u0645\u064a</span><span style="color:'+barCol+';font-weight:900">'+util.toFixed(1)+'%</span></div>'
     + '<div class="hyd-bar"><div class="hyd-bar-fill" style="width:'+utilDisp+'%;background:'+barCol+'"></div></div>'
     + '</div>'
     + '<div class="hyd-compare">'
-    + '<div class="hyd-cmp"><div class="hyd-cmp-lbl">أدنى منسوب تصميمي</div><div class="hyd-cmp-val" style="color:var(--up)">'+mnwl.toFixed(2)+' م</div></div>'
-    + '<div class="hyd-cmp"><div class="hyd-cmp-lbl">أقصى منسوب تصميمي</div><div class="hyd-cmp-val" style="color:var(--blue)">'+mxwl.toFixed(2)+' م</div></div>'
+    + '<div class="hyd-cmp"><div class="hyd-cmp-lbl">\u0623\u062f\u0646\u0649 \u0645\u0646\u0633\u0648\u0628 \u062a\u0635\u0645\u064a\u0645\u064a (\u062e\u0644\u0641)</div><div class="hyd-cmp-val" style="color:var(--up)">'+mnwl.toFixed(2)+' \u0645</div></div>'
+    + '<div class="hyd-cmp"><div class="hyd-cmp-lbl">\u0623\u0642\u0635\u0649 \u0645\u0646\u0633\u0648\u0628 \u062a\u0635\u0645\u064a\u0645\u064a (\u062e\u0644\u0641)</div><div class="hyd-cmp-val" style="color:var(--blue)">'+mxwl.toFixed(2)+' \u0645</div></div>'
     + '</div>'
-    + '<div class="hyd-status '+statusCls+'">'+statusTxt+(rangeNote?'<span style="font-weight:400"> — '+rangeNote+'</span>':'')+'</div>'
+    + '<div class="hyd-status '+statusCls+'">'+statusTxt+(rangeNote?'<span style="font-weight:400">'+rangeNote+'</span>':'')+'</div>'
     + '</div>';
 }
 
@@ -1126,7 +1145,7 @@ function renderManasib(){
           <div></div>
           <div class="dv"><div class="dv-lbl">Δ خلف</div><div class="dv-val ${dcls((c.b!=null&&p.b!=null)?c.b-p.b:null)}">${dsign((c.b!=null&&p.b!=null)?c.b-p.b:null)}</div></div>
         </div>`:''}`:''}
-        ${buildHydraulicCard(st.name, recC?.stations?.[st.name]?.f)}
+        ${buildHydraulicCard(st.name, recC?.stations?.[st.name]?.b, recC?.stations?.[st.name]?.f)}
       </div>
     </div>`;
   });
