@@ -1039,6 +1039,8 @@ function manningQ(seg, actualDepth, canalName) {
 function buildHydraulicCard(stName, actualWL_back, actualWL_front) {
   // actualWL_back  = منسوب خلف الحجز — عمق المياه داخل الترعة (للحساب)
   // actualWL_front = منسوب أمام الحجز — للمعلومية فقط
+  // ── استثناء: فم الجيزة وحجز أبو الشقوق منسوبهم على بحر يوسف مش الترعة ──
+  if (stName === 'فم الجيزة' || stName === 'حجز أبو الشقوق') return '';
   const linked = getSegForStation(stName);
   if (!linked || actualWL_back == null) return '';
   const {seg, segIdx} = linked;

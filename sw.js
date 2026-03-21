@@ -1,12 +1,12 @@
 /* ══════════════════════════════════════════
    Service Worker — ري الجيزة PWA
-   v4 — تعديل حسابات مانينج (حجز الحومدية + فم المنصورية)
+   v5 — إخفاء كارت هيدروليكي لفم الجيزة وحجز أبو الشقوق
    تاريخ: 2026-03-22
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v21';
-const STATIC_CACHE = 'static-v21';
-const DATA_CACHE   = 'data-v21';
+const CACHE_NAME   = 'ري-الجيزة-v22';
+const STATIC_CACHE = 'static-v22';
+const DATA_CACHE   = 'data-v22';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [
