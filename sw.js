@@ -4,7 +4,7 @@
                 Network First للبيانات
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v1';
+const CACHE_NAME   = 'ري-الجيزة-v2';
 const STATIC_CACHE = 'static-v1';
 const DATA_CACHE   = 'data-v1';
 
