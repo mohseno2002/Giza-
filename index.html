@@ -1075,8 +1075,8 @@ function buildHydraulicCard(stName, actualWL_back, actualWL_front) {
     + '<div class="hyd-grid">'
     + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--blue)">'+mActual.A.toFixed(1)+'</div><div class="hyd-val-l">A \u0641\u0639\u0644\u064a \u0645\u00b2</div></div>'
     + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--blue)">'+mActual.V.toFixed(3)+'</div><div class="hyd-val-l">V \u0645/\u062b | n='+mActual.n+'</div></div>'
-    + '<div class="hyd-val hi"><div class="hyd-val-n" style="color:var(--teal)">'+mActual.Q.toFixed(2)+'</div><div class="hyd-val-l">Q \u0641\u0639\u0644\u064a \u0645\u00b3/\u062b</div></div>'
-    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--text2)">'+mDesign.Q.toFixed(2)+'</div><div class="hyd-val-l">Q \u062a\u0635\u0645\u064a\u0645\u064a \u0645\u00b3/\u062b</div></div>'
+    + '<div class="hyd-val hi"><div class="hyd-val-n" style="color:var(--teal)">'+(mActual.Q*86400/1e6).toFixed(3)+'</div><div class="hyd-val-l">Q \u0641\u0639\u0644\u064a \u0645.\u0645\u00b3/\u064a\u0648\u0645</div></div>'
+    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--text2)">'+(mDesign.Q*86400/1e6).toFixed(3)+'</div><div class="hyd-val-l">Q \u062a\u0635\u0645\u064a\u0645\u064a \u0645.\u0645\u00b3/\u064a\u0648\u0645</div></div>'
     + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--text2)">'+dActual.toFixed(2)+'</div><div class="hyd-val-l">\u0639\u0645\u0642 \u0641\u0639\u0644\u064a \u0645</div></div>'
     + '<div class="hyd-val hi"><div class="hyd-val-n" style="color:'+barCol+'">'+util.toFixed(1)+'%</div><div class="hyd-val-l">\u0627\u0633\u062a\u063a\u0644\u0627\u0644 Q</div></div>'
     + '</div>'
@@ -13016,7 +13016,7 @@ function ceShowCanal(district, canal) {
         '<th>عرض القاع م</th><th>الميل</th>'+
         '<th>منسوب القاع م</th><th>أقصى منسوب م</th><th>أدنى منسوب م</th>'+
         '<th>نهاية القسم</th><th>الدور</th>'+
-        '<th>Q م³/ث</th>'+
+        '<th>Q م.م³/يوم</th>'+
       '</tr></thead>'+
       '<tbody>'+
       canal.segments.map((s,i) => {
@@ -13032,7 +13032,7 @@ function ceShowCanal(district, canal) {
           '<td style="color:#81c784">'+s.min_wl+'</td>'+
           '<td style="font-size:10px">'+(s.end_type||'—')+'</td>'+
           '<td>'+rotBadge(s.rotation)+'</td>'+
-          '<td style="font-weight:700;color:#4fc3f7">'+m.Q_cms.toFixed(1)+'</td>'+
+          '<td style="font-weight:700;color:#4fc3f7">'+m.Q_mmd.toFixed(3)+'</td>'+
         '</tr>';
       }).join('')+
       '</tbody>'+
