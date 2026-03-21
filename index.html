@@ -359,19 +359,19 @@ footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-to
 /* ═══════════ CANAL ENGINEERING TAB ═══════════ */
 .ce-panel{background:#0a1628;color:#f0f6ff;font-family:'Cairo',sans-serif;min-height:400px;direction:rtl;}
 .ce-panel *{box-sizing:border-box;}
-.ce-layout{display:flex;height:calc(100vh - 200px);min-height:500px;}
-.ce-sidebar{width:280px;flex-shrink:0;background:#0d2040;border-left:1px solid rgba(100,160,255,.15);overflow-y:auto;display:flex;flex-direction:column;}
+.ce-layout{display:flex;height:calc(100vh - 210px);min-height:480px;}
+.ce-sidebar{width:270px;flex-shrink:0;background:#0d2040;border-left:1px solid rgba(100,160,255,.15);display:flex;flex-direction:column;overflow:hidden;}
 .ce-sidebar::-webkit-scrollbar{width:4px;}
 .ce-sidebar::-webkit-scrollbar-thumb{background:#1a3a6b;border-radius:2px;}
-.ce-search{padding:10px;border-bottom:1px solid rgba(100,160,255,.15);}
+.ce-search{padding:10px;border-bottom:1px solid rgba(100,160,255,.15);flex-shrink:0;}
 .ce-search input{width:100%;background:rgba(255,255,255,.07);border:1px solid rgba(100,160,255,.15);border-radius:9px;padding:8px 12px;color:#f0f6ff;font-family:'Cairo';font-size:12px;outline:none;}
 .ce-search input:focus{border-color:#2196F3;}
 .ce-search input::placeholder{color:#90a4bd;}
-.ce-dtabs{display:flex;flex-wrap:wrap;gap:5px;padding:8px 10px;border-bottom:1px solid rgba(100,160,255,.15);}
+.ce-dtabs{display:flex;flex-wrap:wrap;gap:5px;padding:8px 10px;border-bottom:1px solid rgba(100,160,255,.15);flex-shrink:0;}
 .ce-dtab{background:rgba(255,255,255,.05);border:1px solid rgba(100,160,255,.15);border-radius:7px;padding:4px 9px;font-size:10px;color:#90a4bd;cursor:pointer;transition:all .2s;font-family:'Cairo';}
 .ce-dtab:hover{border-color:#2196F3;color:#f0f6ff;}
 .ce-dtab.active{background:#2196F3;border-color:#2196F3;color:#fff;font-weight:700;}
-.ce-list{flex:1;overflow-y:auto;padding:7px;}
+.ce-list{flex:1;overflow-y:scroll;padding:7px;min-height:0;}
 .ce-item{background:rgba(255,255,255,.03);border:1px solid rgba(100,160,255,.12);border-radius:9px;padding:9px 11px;margin-bottom:5px;cursor:pointer;transition:all .2s;}
 .ce-item:hover{border-color:rgba(33,150,243,.4);background:rgba(33,150,243,.08);}
 .ce-item.active{border-color:#2196F3;background:rgba(33,150,243,.15);}
@@ -12987,9 +12987,13 @@ const _origSwitchTab = switchTab;
 switchTab = function(i) {
   _origSwitchTab(i);
   if (i === 5) {
-    // تأكد إن القائمة متحملة حتى لو initCE اتعملت قبل
-    const list = document.getElementById('ceList');
-    if (list && list.children.length === 0) ceRenderList('');
+    // انتظر frame واحد بعد ما الـ section يتفعّل
+    requestAnimationFrame(() => {
+      const list = document.getElementById('ceList');
+      if (list && list.children.length === 0) {
+        if (window.DATA) ceRenderList('');
+      }
+    });
   }
 };
 
