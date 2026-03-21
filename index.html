@@ -1268,7 +1268,7 @@ function renderWeekCompare(rec){
       const dy=String(d.getDate()).padStart(2,'0');
       const k=mo+'-'+dy;
       const v=DB.lookup[k]?.[CURR]?.stations?.[st.id];
-      const fv=v?.(st.side==='f'?v.f:v.b):null;
+      const fv=v!=null?(st.side==='f'?v.f:v.b):null;
       if(fv!=null) vals.push(fv);
     }
     const avg=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null;
