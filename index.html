@@ -126,6 +126,27 @@ select{background:var(--card);border:1px solid var(--border2);color:var(--text);
 .dv-val.up{color:var(--up);}.dv-val.dn{color:var(--dn);}.dv-val.neu{color:var(--neu);}
 .nodata{font-size:10px;color:var(--text3);padding:14px;text-align:center;font-style:italic;}
 
+/* HYDRAULIC LIVE CARD */
+.hyd-card{margin-top:5px;padding:7px 9px;background:linear-gradient(135deg,rgba(21,101,192,.07),rgba(0,121,107,.07));border:1px solid rgba(0,121,107,.2);border-radius:9px;}
+.hyd-title{font-size:9px;font-weight:700;color:var(--teal);margin-bottom:6px;display:flex;align-items:center;gap:4px;}
+.hyd-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px;}
+.hyd-val{background:var(--card2);border:1px solid var(--border);border-radius:7px;padding:5px;text-align:center;}
+.hyd-val.hi{background:rgba(0,121,107,.08);border-color:rgba(0,121,107,.25);}
+.hyd-val-n{font-size:13px;font-weight:900;line-height:1;}
+.hyd-val-l{font-size:8px;color:var(--text3);margin-top:2px;}
+.hyd-util{margin-top:4px;}
+.hyd-util-lbl{display:flex;justify-content:space-between;font-size:8px;color:var(--text3);margin-bottom:3px;}
+.hyd-bar{height:8px;background:var(--bg2);border-radius:4px;overflow:hidden;}
+.hyd-bar-fill{height:100%;border-radius:4px;transition:width .5s ease;}
+.hyd-compare{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:5px;}
+.hyd-cmp{background:var(--card2);border-radius:7px;padding:5px 7px;text-align:center;border:1px solid var(--border);}
+.hyd-cmp-lbl{font-size:8px;color:var(--text3);}
+.hyd-cmp-val{font-size:11px;font-weight:900;}
+.hyd-status{font-size:9px;font-weight:700;padding:3px 8px;border-radius:5px;text-align:center;margin-top:5px;}
+.hyd-status.ok{background:#e8f5e9;color:var(--up);}
+.hyd-status.warn{background:#fff8e1;color:#e65100;}
+.hyd-status.low{background:#ffebee;color:var(--dn);}
+
 /* ANNUAL AVG CARD */
 .ann-card{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);}
 .ann-hdr{padding:8px 14px;background:linear-gradient(to left,var(--bg2),var(--card));border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
@@ -967,6 +988,85 @@ function dsign(v,d=2){if(v==null)return'—';return(v>0?'+':'')+v.toFixed(d);}
 /* ══════════ RENDER ALL ══════════ */
 function renderAll(){renderManasib();renderFlows();autoDecision();if(document.getElementById('sec4').classList.contains('active'))renderNetworkMap();}
 
+/* ══════════ HYDRAULIC LIVE CARD ══════════ */
+function getSegForStation(stName) {
+  if (!window.DATA) return null;
+  const link = STATION_CANAL_MAP[stName];
+  if (!link) return null;
+  const canals = DATA[link.district];
+  if (!canals) return null;
+  const canal = canals.find(c => c.name === link.canal);
+  if (!canal) return null;
+  return {seg: canal.segments[link.seg||0], canal};
+}
+
+function manningQ(seg, actualDepth) {
+  if (!seg) return null;
+  const bw  = parseFloat(seg.base_width) || 0;
+  const bg  = parseFloat(seg.base_grad)  || 5;
+  const sm  = (seg.side_slope||'1:1').match(/(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)/);
+  const z   = sm ? parseFloat(sm[1])/parseFloat(sm[2]) : 1;
+  const d   = Math.max(0.05, actualDepth);
+  const A   = (bw + z*d) * d;
+  const P   = bw + 2*d * Math.sqrt(1 + z*z);
+  const R   = A / P;
+  const S   = bg / 100000;
+  const V   = (1/0.025) * Math.pow(R, 2/3) * Math.pow(S, 0.5);
+  return { Q: A*V, A, V, R, d };
+}
+
+function buildHydraulicCard(stName, actualWL) {
+  const linked = getSegForStation(stName);
+  if (!linked || actualWL == null) return '';
+  const {seg} = linked;
+  const bl    = parseFloat(seg.base_level) || 0;
+  const mxwl  = parseFloat(seg.max_wl)    || bl+2;
+  const mnwl  = parseFloat(seg.min_wl)    || bl+1;
+
+  const dActual  = actualWL - bl;
+  const dDesign  = mxwl - bl;
+  if (dActual <= 0) return '';
+
+  const mActual  = manningQ(seg, dActual);
+  const mDesign  = manningQ(seg, dDesign);
+  if (!mActual || !mDesign) return '';
+
+  const util     = Math.min(120, mActual.Q / mDesign.Q * 100);
+  const utilDisp = Math.min(100, util);
+  const barCol   = util > 90 ? '#c62828' : util > 60 ? '#00796b' : util > 30 ? '#f57f17' : '#c62828';
+  let statusCls, statusTxt;
+  if (util > 90)       { statusCls='warn'; statusTxt='⚠️ قريب من الطاقة القصوى'; }
+  else if (util > 55)  { statusCls='ok';   statusTxt='✅ تشغيل ضمن النطاق الأمثل'; }
+  else if (util > 25)  { statusCls='warn'; statusTxt='⚡ استغلال متوسط — دون المستوى'; }
+  else                 { statusCls='low';  statusTxt='🔴 استغلال ضعيف — المياه منخفضة'; }
+
+  // Check vs design range
+  let rangeNote = '';
+  if (actualWL < mnwl)      rangeNote = ' ↓ أقل من أدنى منسوب';
+  else if (actualWL > mxwl) rangeNote = ' ↑ يتجاوز أقصى منسوب';
+
+  return '<div class="hyd-card">'
+    + '<div class="hyd-title">🔬 الأداء الهيدروليكي الفعلي — '+linked.canal.name+'</div>'
+    + '<div class="hyd-grid">'
+    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--blue)">'+mActual.A.toFixed(1)+'</div><div class="hyd-val-l">A فعلي م²</div></div>'
+    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--blue)">'+mActual.V.toFixed(3)+'</div><div class="hyd-val-l">V فعلي م/ث</div></div>'
+    + '<div class="hyd-val hi"><div class="hyd-val-n" style="color:var(--teal)">'+mActual.Q.toFixed(2)+'</div><div class="hyd-val-l">Q فعلي م³/ث</div></div>'
+    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--text2)">'+mDesign.Q.toFixed(2)+'</div><div class="hyd-val-l">Q تصميمي م³/ث</div></div>'
+    + '<div class="hyd-val"><div class="hyd-val-n" style="color:var(--text2)">'+dActual.toFixed(2)+'</div><div class="hyd-val-l">عمق فعلي م</div></div>'
+    + '<div class="hyd-val hi"><div class="hyd-val-n" style="color:'+barCol+'">'+util.toFixed(1)+'%</div><div class="hyd-val-l">استغلال Q</div></div>'
+    + '</div>'
+    + '<div class="hyd-util">'
+    + '<div class="hyd-util-lbl"><span>Q فعلي / Q تصميمي</span><span style="color:'+barCol+';font-weight:900">'+util.toFixed(1)+'%</span></div>'
+    + '<div class="hyd-bar"><div class="hyd-bar-fill" style="width:'+utilDisp+'%;background:'+barCol+'"></div></div>'
+    + '</div>'
+    + '<div class="hyd-compare">'
+    + '<div class="hyd-cmp"><div class="hyd-cmp-lbl">أدنى منسوب تصميمي</div><div class="hyd-cmp-val" style="color:var(--up)">'+mnwl.toFixed(2)+' م</div></div>'
+    + '<div class="hyd-cmp"><div class="hyd-cmp-lbl">أقصى منسوب تصميمي</div><div class="hyd-cmp-val" style="color:var(--blue)">'+mxwl.toFixed(2)+' م</div></div>'
+    + '</div>'
+    + '<div class="hyd-status '+statusCls+'">'+statusTxt+(rangeNote?'<span style="font-weight:400"> — '+rangeNote+'</span>':'')+'</div>'
+    + '</div>';
+}
+
 /* ══════════ RENDER MANASIB ══════════ */
 function renderManasib(){
   const mm=String(selMonth).padStart(2,'0');
@@ -1020,6 +1120,7 @@ function renderManasib(){
           <div></div>
           <div class="dv"><div class="dv-lbl">Δ خلف</div><div class="dv-val ${dcls((c.b!=null&&p.b!=null)?c.b-p.b:null)}">${dsign((c.b!=null&&p.b!=null)?c.b-p.b:null)}</div></div>
         </div>`:''}`:''}
+        ${buildHydraulicCard(st.name, recC?.stations?.[st.name]?.f)}
       </div>
     </div>`;
   });
