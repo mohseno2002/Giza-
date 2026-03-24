@@ -1,12 +1,12 @@
 /* ══════════════════════════════════════════
    Service Worker — ري الجيزة PWA
-   v5 — إخفاء كارت هيدروليكي لفم الجيزة وحجز أبو الشقوق
+   v6 — فحص تسلسل المناسيب من المنبع للمصب
    تاريخ: 2026-03-22
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v22';
-const STATIC_CACHE = 'static-v22';
-const DATA_CACHE   = 'data-v22';
+const CACHE_NAME   = 'ري-الجيزة-v23';
+const STATIC_CACHE = 'static-v23';
+const DATA_CACHE   = 'data-v23';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [

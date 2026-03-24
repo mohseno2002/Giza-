@@ -1827,6 +1827,41 @@ function autoDecision(){
 
   if(totalFlow!=null&&totalFlow<1.5) warnings.push('إجمالي التصرف ضعيف — زيادة وحدات الضخ');
 
+  // ━━ فحص تسلسل المناسيب (لازم ينحدر من المنبع للمصب) ━━
+  // ترتيب المحطات من المنبع للمصب على ترعة الجيزة
+  const GRADIENT_CHAIN_GIZA = [
+    {name:'فم الجيزة',       side:'b'},
+    {name:'حجز أبو الشقوق', side:'b'},
+    {name:'حجز 39',          side:'b'},
+    {name:'حجز 48',          side:'b'},
+    {name:'حجز العياط',      side:'b'},
+    {name:'حجز أبو رجوان',  side:'b'},
+    {name:'حجز الحومدية',   side:'b'},
+  ];
+  // ترعة المنصورية
+  const GRADIENT_CHAIN_MANS = [
+    {name:'فم المنصورية',   side:'b'},
+    {name:'حجز المنشية',    side:'b'},
+    {name:'حجز الحواجز',    side:'b'},
+  ];
+  function checkGradientChain(chain, rec) {
+    let prevVal = null;
+    let prevName = null;
+    for (const node of chain) {
+      const val = stVal(rec, node.name, node.side);
+      if (val == null) { prevVal = null; prevName = node.name; continue; }
+      if (prevVal != null && val > prevVal) {
+        criticals.push(
+          '⚠️ خطأ في المناسيب: خلف ' + node.name + ' (' + val.toFixed(2) + ' م) أعلى من خلف ' + prevName + ' (' + prevVal.toFixed(2) + ' م) — راجع القراءة!'
+        );
+      }
+      prevVal = val;
+      prevName = node.name;
+    }
+  }
+  checkGradientChain(GRADIENT_CHAIN_GIZA, rec);
+  checkGradientChain(GRADIENT_CHAIN_MANS, rec);
+
   // ━━ شريط الحالة ━━
   const totalProblems=criticals.length+warnings.length;
   if(totalProblems===0){
