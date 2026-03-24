@@ -1,12 +1,12 @@
 /* ══════════════════════════════════════════
    Service Worker — ري الجيزة PWA
-   v6 — فحص تسلسل المناسيب من المنبع للمصب
+   v7 — فحص أمام المنصورية vs خلف الحومدية
    تاريخ: 2026-03-22
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v23';
-const STATIC_CACHE = 'static-v23';
-const DATA_CACHE   = 'data-v23';
+const CACHE_NAME   = 'ري-الجيزة-v24';
+const STATIC_CACHE = 'static-v24';
+const DATA_CACHE   = 'data-v24';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [

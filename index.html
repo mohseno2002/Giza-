@@ -1862,6 +1862,23 @@ function autoDecision(){
   checkGradientChain(GRADIENT_CHAIN_GIZA, rec);
   checkGradientChain(GRADIENT_CHAIN_MANS, rec);
 
+  // ━━ فحص خاص: أمام فم المنصورية لازم أقل من خلف حجز الحومدية ━━
+  const wlHawam  = stVal(rec, 'حجز الحومدية',  'b');
+  const wlMansF  = stVal(rec, 'فم المنصورية',  'f');
+  if (wlHawam != null && wlMansF != null && wlMansF > wlHawam) {
+    criticals.push(
+      '🔴 خطأ: أمام فم المنصورية (' + wlMansF.toFixed(2) + ' م) أعلى من خلف حجز الحومدية (' + wlHawam.toFixed(2) + ' م) — راجع القراءة!'
+    );
+  }
+
+  // ━━ فحص خاص: أمام فم المنصورية لازم أقل من خلف فم المنصورية ━━
+  const wlMansB = stVal(rec, 'فم المنصورية', 'b');
+  if (wlMansF != null && wlMansB != null && wlMansB > wlMansF) {
+    criticals.push(
+      '🔴 خطأ: خلف فم المنصورية (' + wlMansB.toFixed(2) + ' م) أعلى من أمامه (' + wlMansF.toFixed(2) + ' م) — المياه لا تجري عكس الاتجاه!'
+    );
+  }
+
   // ━━ شريط الحالة ━━
   const totalProblems=criticals.length+warnings.length;
   if(totalProblems===0){
