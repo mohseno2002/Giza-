@@ -1,12 +1,12 @@
 /* ══════════════════════════════════════════
    Service Worker — ري الجيزة PWA
-   v7 — فحص أمام المنصورية vs خلف الحومدية
-   تاريخ: 2026-03-22
+   v8 — معايرة مانينج الرياح البحيرى n=0.0302 (تصرف 21.5 م.م³/يوم)
+   تاريخ: 2026-03-25
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v24';
-const STATIC_CACHE = 'static-v24';
-const DATA_CACHE   = 'data-v24';
+const CACHE_NAME   = 'ري-الجيزة-v25';
+const STATIC_CACHE = 'static-v25';
+const DATA_CACHE   = 'data-v25';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [
