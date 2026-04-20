@@ -296,8 +296,17 @@ select{background:var(--card);border:1px solid var(--border2);color:var(--text);
   .smart-panel .sp-fab{display:none;}
   .smart-panel .sp-hdr{display:flex;}
   .smart-panel .sp-body{display:block;max-height:none;}
+  /* لما يتقفل على الديسكتوب يرجع زرار دائرى صغير زى الموبايل */
+  .smart-panel.collapsed{
+    width:52px;height:52px;border-radius:50%;
+    border:none;background:linear-gradient(135deg,var(--navy3),var(--navy2));
+    box-shadow:0 4px 18px rgba(0,0,0,.35);
+    /* ارجع للزاوية الافتراضية تلقائياً */
+    left:12px!important;bottom:16px!important;top:auto!important;right:auto!important;
+  }
   .smart-panel.collapsed .sp-body{display:none;}
-  .smart-panel.collapsed .sp-hdr{border-radius:10px;}
+  .smart-panel.collapsed .sp-hdr{display:none;}
+  .smart-panel.collapsed .sp-fab{display:flex;}
 }
 .sp-status{font-size:10px;font-weight:900;padding:4px 8px;border-radius:6px;margin-bottom:6px;text-align:center;display:none;}
 .sp-status.safe{background:#e8f5e9;color:#2e7d32;display:block;}
@@ -1418,7 +1427,13 @@ function toggleSP(){
     p.classList.toggle('expanded');
   } else {
     p.classList.toggle('collapsed');
-    p.querySelector('.sp-btn').textContent=p.classList.contains('collapsed')?'+':'✕';
+    // لما يتقفل على الديسكتوب — امسح أى موضع كان منسحب ليه عشان يرجع للزاوية
+    if(p.classList.contains('collapsed')){
+      p.style.left='';p.style.top='';p.style.right='';p.style.bottom='';
+      p.style.transition='';
+    }
+    const btn=p.querySelector('.sp-btn');
+    if(btn) btn.textContent=p.classList.contains('collapsed')?'+':'✕';
   }
 }
 // على الموبايل — البانيل مصغّر بالدفولت

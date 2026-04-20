@@ -1,12 +1,12 @@
 /* ══════════════════════════════════════════
    Service Worker — ري الجيزة PWA
-   v8 — معايرة مانينج الرياح البحيرى n=0.0209 (تصرف 21.5 م.م³/يوم)
-   تاريخ: 2026-03-25
+   v9 — إصلاح زرار إغلاق المساعد الذكى (Smart Panel) على الديسكتوب
+   تاريخ: 2026-04-20
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v26';
-const STATIC_CACHE = 'static-v26';
-const DATA_CACHE   = 'data-v26';
+const CACHE_NAME   = 'ري-الجيزة-v27';
+const STATIC_CACHE = 'static-v27';
+const DATA_CACHE   = 'data-v27';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [
