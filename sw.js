@@ -4,9 +4,9 @@
    تاريخ: 2026-04-20
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v27';
-const STATIC_CACHE = 'static-v27';
-const DATA_CACHE   = 'data-v27';
+const CACHE_NAME   = 'ري-الجيزة-v28';
+const STATIC_CACHE = 'static-v28';
+const DATA_CACHE   = 'data-v28';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [
@@ -16,6 +16,7 @@ const STATIC_ASSETS = [
   './icon-192.png',
   './icon-512.png',
   'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js',
+  'https://unpkg.com/geotiff@3.0.5/dist-browser/geotiff.js',
   'https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap',
 ];
 
