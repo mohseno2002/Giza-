@@ -14473,6 +14473,13 @@ WW.fieldOptions = function(status){
   const o=[["unreviewed","غير مُعاين"],["confirmed","مؤكد ميدانياً"],["cleared","ليس حشائش"]];
   return o.map(x=>`<option value="${x[0]}"${status===x[0]?" selected":""}>${x[1]}</option>`).join("");
 };
+WW.earthUrl = function(lat,lon){
+  return "https://earth.google.com/web/@"+lat.toFixed(6)+","+lon.toFixed(6)+",30a,900d,35y,0h,0t,0r";
+};
+WW.earthBtn = function(r){
+  const p=r.pm||r.p0;if(!p)return "—";
+  return '<a class="weed-btn ww-earth" href="'+WW.earthUrl(p.lat,p.lon)+'" target="_blank" rel="noopener" title="تأكيد بصرى على Google Earth" style="padding:4px 7px;text-decoration:none">🌍</a>';
+};
 WW.renderResults = function(){
   const rows=WW.results||[],ok=rows.filter(r=>r.status==="ok");
   const area=ok.reduce((a,r)=>a+(+r.area||0),0),channel=ok.reduce((a,r)=>a+(+r.channelArea||0),0);
@@ -14489,11 +14496,11 @@ WW.renderResults = function(){
   if(body){
     if(!rows.length)body.innerHTML='<tr><td colspan="14"><div class="weed-empty"><b>لا توجد نتائج بعد</b>ابحث عن الصور ثم شغّل التحليل. لن تُعرض أرقام افتراضية.</div></td></tr>';
     else body.innerHTML=rows.map(r=>{
-      if(r.status!=="ok")return `<tr data-key="${esc(r.key)}"><td class="num">ك${r.from.toFixed(1)}–${r.to.toFixed(1)}</td><td>${esc(r.reach)}</td><td colspan="7"><span class="weed-badge na">لا بيانات صالحة</span> <span style="color:var(--ink-3);font-size:.68rem">${esc(r.reason||"")}</span></td><td>—</td><td>${WW.badge({code:"na",label:"غير مصنف"})}</td><td><select class="ww-field" data-key="${esc(r.key)}">${WW.fieldOptions((WW.validation[r.key]||{}).status||"unreviewed")}</select></td><td><button class="weed-btn ww-note" data-key="${esc(r.key)}" style="padding:4px 7px">✎</button></td><td><button class="weed-btn ww-mission" data-key="${esc(r.key)}" data-kind="weeds" style="padding:4px 7px">＋</button></td></tr>`;
+      if(r.status!=="ok")return `<tr data-key="${esc(r.key)}"><td class="num"><a href="${WW.earthUrl((r.pm||r.p0).lat,(r.pm||r.p0).lon)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline dotted">ك${r.from.toFixed(1)}–${r.to.toFixed(1)}</a></td><td>${esc(r.reach)}</td><td colspan="7"><span class="weed-badge na">لا بيانات صالحة</span> <span style="color:var(--ink-3);font-size:.68rem">${esc(r.reason||"")}</span></td><td>—</td><td>${WW.badge({code:"na",label:"غير مصنف"})}</td><td><select class="ww-field" data-key="${esc(r.key)}">${WW.fieldOptions((WW.validation[r.key]||{}).status||"unreviewed")}</select></td><td><button class="weed-btn ww-note" data-key="${esc(r.key)}" style="padding:4px 7px">✎</button></td><td><button class="weed-btn ww-mission" data-key="${esc(r.key)}" data-kind="weeds" style="padding:4px 7px">＋</button></td></tr>`;
       const ch=r.change==null?"—":(r.change>=0?"+":"")+WW.areaText(r.change);
       const h=r.hydraulic||{},field=WW.validation[r.key]||{status:r.fieldStatus||"unreviewed",note:r.fieldNote||""};
       return `<tr data-key="${esc(r.key)}">
-        <td class="num">ك${r.from.toFixed(1)}–${r.to.toFixed(1)}</td><td>${esc(r.reach)}</td>
+        <td class="num"><a href="${WW.earthUrl(r.pm.lat,r.pm.lon)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline dotted" title="فتح القطاع على Google Earth">ك${r.from.toFixed(1)}–${r.to.toFixed(1)}</a></td><td>${esc(r.reach)}</td>
         <td class="num">${WW.areaText(r.area)}</td><td class="num">${r.coverage.toFixed(1)}</td>
         <td class="num">${Math.round(r.affectedM)} م</td><td class="num">${ch}</td>
         <td class="num">${r.meanNdvi==null?"—":r.meanNdvi.toFixed(2)}</td><td class="num">${r.validPct.toFixed(0)}٪</td>
@@ -14502,7 +14509,7 @@ WW.renderResults = function(){
         <td>${WW.badge(r.priority)}</td>
         <td><select class="ww-field" data-key="${esc(r.key)}">${WW.fieldOptions(field.status||"unreviewed")}</select></td>
         <td><button class="weed-btn ww-note" data-key="${esc(r.key)}" title="${esc(field.note||"إضافة ملاحظة")}" style="padding:4px 7px">✎</button></td>
-        <td><button class="weed-btn ww-mission" data-key="${esc(r.key)}" data-kind="weeds" style="padding:4px 7px">＋</button></td>
+        <td style="white-space:nowrap"><button class="weed-btn ww-mission" data-key="${esc(r.key)}" data-kind="weeds" style="padding:4px 7px">＋</button> ${WW.earthBtn(r)}</td>
       </tr>`;
     }).join("");
     body.querySelectorAll(".ww-field").forEach(s=>s.onchange=()=>WW.setFieldStatus(s.dataset.key,s.value));
@@ -14540,7 +14547,7 @@ WW.renderEncroachments = function(){
   body.innerHTML=changed.sort((a,b)=>(+b.encroachment.area||0)-(+a.encroachment.area||0)).map(r=>{
     const e=r.encroachment,v=WW.validation["enc:"+r.key]||{status:"unreviewed"};
     return `<tr>
-      <td class="num">ك${r.from.toFixed(1)}–${r.to.toFixed(1)}</td>
+      <td class="num"><a href="${WW.earthUrl(r.pm.lat,r.pm.lon)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline dotted" title="فتح على Google Earth">ك${r.from.toFixed(1)}–${r.to.toFixed(1)}</a> ${WW.earthBtn(r)}</td>
       <td class="num">${WW.areaText(e.area)}</td><td>${esc(e.type||"—")}</td>
       <td class="num">${WW.areaText(e.vegArea)}</td><td class="num">${WW.areaText(e.builtArea)}</td>
       <td class="num">${WW.areaText(e.lossArea)}</td><td class="num">${(+e.validPct||0).toFixed(0)}٪</td>
@@ -14904,7 +14911,11 @@ WW.drawMap = function(){
       const vx=o.b.x-o.a.x,vy=o.b.y-o.a.y,t=Math.max(0,Math.min(1,((x-o.a.x)*vx+(y-o.a.y)*vy)/(vx*vx+vy*vy||1)));
       const d=Math.hypot(x-(o.a.x+t*vx),y-(o.a.y+t*vy));if(d<dist){dist=d;best=o.r}
     });
-    if(best&&dist<28)toast("ك"+best.from.toFixed(1)+"–"+best.to.toFixed(1)+" · "+(best.priority?.label||"لا بيانات")+" · "+(best.status==="ok"?WW.areaText(best.area)+" م²":best.reason),"brand");
+    if(best&&dist<28){
+      toast("ك"+best.from.toFixed(1)+"–"+best.to.toFixed(1)+" · "+(best.priority?.label||"لا بيانات")+" · "+(best.status==="ok"?WW.areaText(best.area)+" م²":best.reason)+" · جارٍ الفتح على Google Earth","brand");
+      const p=best.pm||best.p0;
+      if(p)setTimeout(()=>window.open(WW.earthUrl(p.lat,p.lon),"_blank","noopener"),450);
+    }
   };
 };
 WW.csvCell = v=>'"'+String(v==null?"":v).replace(/"/g,'""')+'"';
@@ -16270,7 +16281,6 @@ WP.viewHtml = function () {
 
 
 
-/* ═══ تركيب التبويبين ═══ */
 WW.mountView = function(){
   const root=document.getElementById("wwRoot");if(!root)return;
   root.innerHTML=WW.view();WW.after();
