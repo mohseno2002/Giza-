@@ -1,12 +1,12 @@
 /* ══════════════════════════════════════════
    Service Worker — ري الجيزة PWA
-   v9 — إصلاح زرار إغلاق المساعد الذكى (Smart Panel) على الديسكتوب
-   تاريخ: 2026-04-20
+   v31 — تبويب «الإجهاد المائى والتشخيص»: RET + رطوبة تربة WaPOR + NDMI
+   تاريخ: 2026-07-30
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v28';
-const STATIC_CACHE = 'static-v28';
-const DATA_CACHE   = 'data-v28';
+const CACHE_NAME   = 'ري-الجيزة-v31';
+const STATIC_CACHE = 'static-v31';
+const DATA_CACHE   = 'data-v31';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [
@@ -51,9 +51,26 @@ self.addEventListener('activate', e => {
   );
 });
 
+/* ─── أصول شبكية لا تُخزَّن أبداً ───
+   رسترات WaPOR وبلاطات Sentinel-2 وفهارس STAC: أحجام ضخمة وطلبات Range،
+   وتخزينها يستهلك حصة المتصفح ويفشل مع الاستجابة 206. */
+const NEVER_CACHE_ORIGINS = [
+  'data.apps.fao.org',
+  'storage.googleapis.com',
+  'earth-search.aws.element84.com',
+  'amazonaws.com',
+  'overpass-api.de',
+];
+
 /* ─── Fetch Strategy ─── */
 self.addEventListener('fetch', e => {
   const url = e.request.url;
+
+  // طلبات غير GET أو بترويسة Range → تمرير مباشر بلا وسيط
+  if (e.request.method !== 'GET' || e.request.headers.has('range')) return;
+
+  // أصول البيانات الضخمة → الشبكة فقط
+  if (NEVER_CACHE_ORIGINS.some(h => url.includes(h))) return;
 
   // Google Sheets → Network First (بيانات حية — دايماً من النت)
   if (DATA_URLS.some(u => url.startsWith(u))) {

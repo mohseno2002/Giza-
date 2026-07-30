@@ -854,6 +854,7 @@ footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-to
   <div class="tab" onclick="switchTab(5)">🏗️ الأورنيك الهندسي</div>
   <div class="tab" onclick="switchTab(6)">🌿 رصد الحشائش</div>
   <div class="tab" onclick="switchTab(7)">🛰️ WaPOR الاستهلاك الفعلى</div>
+  <div class="tab" onclick="switchTab(8)">💧 الإجهاد المائى والتشخيص</div>
 </div>
 
 <div class="picker">
@@ -976,6 +977,7 @@ footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-to
 
 <div class="section" id="sec6"><div id="wwRoot"></div></div>
 <div class="section" id="sec7"><div id="wpRoot"></div></div>
+<div class="section" id="sec8"><div id="wsRoot"></div></div>
 
 <!-- SMART PANEL -->
 <div class="smart-panel" id="smartPanel">
@@ -16294,6 +16296,1052 @@ WP.mount = function(){
 };
 window.WP = WP;
 
+</script>
+<script>
+"use strict";
+/* ════════════════════════════════════════════════════════════════════
+   الإجهاد المائى والتشخيص — WS
+   وحدة مستقلة تُبنى فوق تبويب WaPOR (WP) وتبويب الحشائش (WW) دون تعديلهما.
+   المنهج: أربعة أدلة مستقلة لكل خلية تحليل:
+     1) ETa/ETo من WaPOR منسوبة لأفضل النظائر (نسبة البخر النسبية) — الكفاية
+     2) الرطوبة النسبية للتربة L2-RSM-D (100 م) — بديل سنسور التربة
+     3) NDMI من Sentinel-2 (B08/B11) على البكسلات المزروعة فقط — تأكيد بصرى
+     4) التصرف المنصرف من المغذيات مقابل الاحتياج الصافى — دليل هيدروليكى
+   منطق التشخيص: العطش الحقيقى ≠ الإجهاد مع تربة مروية (مشكلة جذور/ملوحة/صرف).
+   ════════════════════════════════════════════════════════════════════ */
+const WS = {
+  RET_PREFIX: 'L1-RET-',
+  RSM_CODE_L2: 'L2-RSM-D',
+  RSM_CODE_L1: 'L1-RSM-D',
+  SAVE_KEY: 'giza.stress.diagnosis.v1',
+  NDMI_ASSETS: ['red', 'nir', 'swir16', 'scl'],
+  PIXEL_M: 160,
+  config: {
+    defTh: 15, rsmLow: 35, rsmHigh: 60, refPct: 90,
+    vegNdvi: 0.25, rsmMode: 'mid', sceneDays: 30, cloudMax: 25,
+    period: 'last', dist: 'all'
+  },
+  series: {}, cellStat: {}, ndmi: {}, scene: null, rsmLevel: '',
+  supply: {}, indic: {}, diagRows: [], counts: {}, rsmScaleNote: '',
+  running: false, abort: null, logs: [], picked: null, ready: false,
+  charts: {},
+  DIAG: {
+    ok:     { l: 'سليم',                      c: '#2e7d32', a: 'لا إجراء — استمرار المتابعة الدورية.' },
+    supply: { l: 'عطش · نقص إمداد',            c: '#c62828', a: 'راجع نصيب الهندسة من التصرف الكلى ودور المناوبة — العجز على مستوى المنظومة.' },
+    dist:   { l: 'عطش · خلل توزيع أو وصول',    c: '#ef6c00', a: 'الإمداد الكلى كافٍ والعطش موضعى: افحص المسقى والذيول وأعمال التطهير ومحطات الرفع الخاصة.' },
+    root:   { l: 'تربة مروية والنبات لا يشرب', c: '#6a1b9a', a: 'ممنوع زيادة المياه. معاينة ميدانية: ملوحة، أعفان جذور أو نيماتودا، أو ضعف صرف.' },
+    check:  { l: 'يلزم معاينة',                c: '#0e5a8a', a: 'الأدلة غير متسقة أو ناقصة — أضف معاينة ميدانية قبل أى قرار مائى.' },
+    over:   { l: 'إهدار أو غرق محتمل',         c: '#00838f', a: 'رطوبة مرتفعة بلا إجهاد مع احتياج مُغطّى — راجع الفتحات وزمن الرى والصرف.' }
+  }
+};
+
+/* ───────── أدوات ───────── */
+WS.fmt = function (n) { return (+n || 0).toLocaleString('ar-EG'); };
+WS.num = function (v, d) { return Number.isFinite(v) ? v.toFixed(d == null ? 2 : d) : '—'; };
+WS.pct = function (v, d) { return Number.isFinite(v) ? v.toFixed(d == null ? 0 : d) + '٪' : '—'; };
+WS.esc = function (s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+};
+WS.log = function (msg, kind) {
+  WS.logs.unshift({ t: new Date().toLocaleTimeString('ar-EG'), m: msg, k: kind || '' });
+  if (WS.logs.length > 140) WS.logs.pop();
+  WS.renderLog();
+};
+WS.renderLog = function () {
+  const el = document.getElementById('wsLog');
+  if (!el) return;
+  el.innerHTML = WS.logs.map(function (x) {
+    return '<div class="' + x.k + '">' + WS.esc(x.t) + ' — ' + WS.esc(x.m) + '</div>';
+  }).join('');
+};
+WS.setStatus = function (text, state) {
+  const el = document.getElementById('wsState');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'wp-bdg ' + (state === 'ok' ? 'ok' : state === 'bad' ? 'b' : state === 'busy' ? 'w' : '');
+};
+WS.setLoad = function (show, label, pct) {
+  const bar = document.getElementById('wsProg'), lb = document.getElementById('wsProgLab');
+  if (bar) bar.style.width = show ? Math.max(2, Math.min(100, pct || 0)) + '%' : '0%';
+  if (lb) lb.textContent = show ? (label || '') : '';
+};
+WS.hint = function (e) {
+  const m = String(e && e.message || e || '');
+  if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return ' — سبب مُرجّح: حجب CORS أو انقطاع الشبكة';
+  if (/HTTP 4\d\d/.test(m)) return ' — سبب مُرجّح: صيغة الطلب أو الصلاحيات';
+  if (/HTTP 5\d\d/.test(m)) return ' — سبب مُرجّح: عطل مؤقت بالخادم، أعد المحاولة';
+  if (/بلاطة|EPSG/.test(m)) return ' — سبب مُرجّح: القطاع يعبر حد صورة القمر';
+  return '';
+};
+WS.pctl = function (arr, p) {
+  const a = arr.filter(Number.isFinite).sort(function (x, y) { return x - y; });
+  if (!a.length) return NaN;
+  const i = (a.length - 1) * Math.max(0, Math.min(100, p)) / 100;
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? a[lo] : a[lo] + (a[hi] - a[lo]) * (i - lo);
+};
+WS.meanOf = function (a) {
+  const v = a.filter(Number.isFinite);
+  return v.length ? v.reduce(function (s, x) { return s + x; }, 0) / v.length : NaN;
+};
+WS.cvOf = function (a) {
+  const v = a.filter(Number.isFinite);
+  if (v.length < 3) return NaN;
+  const m = WS.meanOf(v);
+  if (!(Math.abs(m) > 1e-9)) return NaN;
+  const sd = Math.sqrt(v.reduce(function (s, x) { return s + (x - m) * (x - m); }, 0) / (v.length - 1));
+  return sd / m * 100;
+};
+WS.cropCells = function () {
+  return (WP.cells || []).filter(function (c) { return c.cov !== 'urban'; });
+};
+WS.dists = function () { return (GZGEO.DIST || []); };
+WS.distName = function (id) {
+  const d = WS.dists().find(function (x) { return x.id === id; });
+  return d ? d.n : id;
+};
+WS.saveConfig = function () {
+  try {
+    localStorage.setItem(WS.SAVE_KEY, JSON.stringify({ config: WS.config, scene: WS.scene, rsmLevel: WS.rsmLevel }));
+  } catch (e) { /* حصة التخزين */ }
+};
+WS.loadConfig = function () {
+  try {
+    const x = JSON.parse(localStorage.getItem(WS.SAVE_KEY) || '{}');
+    if (x && x.config) WS.config = Object.assign(WS.config, x.config);
+  } catch (e) { /* تجاهل */ }
+};
+
+/* ───────── جسر بيانات WaPOR ───────── */
+WS.baseReady = function () {
+  return !!(WP && WP.cells && WP.cells.length && WP.periods && WP.periods.length &&
+    WP.series && Object.keys(WP.series).length && WP.source === 'wapor');
+};
+WS.blankSeries = function () {
+  const s = {};
+  (WP.cells || []).forEach(function (c) {
+    s[c.id] = (WP.periods || []).map(function () { return { ret: null, rsm: null }; });
+  });
+  return s;
+};
+WS.dekadKeys = function (p) {
+  /* مفاتيح العشرات المقابلة للفترة — العشرية تُعيد نفسها، والشهرية تُعيد ثلاثاً */
+  if (p.dekad) return [p.key];
+  const mm = String(p.month).padStart(2, '0');
+  const all = [p.yr + '-' + mm + '-D1', p.yr + '-' + mm + '-D2', p.yr + '-' + mm + '-D3'];
+  return WS.config.rsmMode === 'all' ? all : [all[1]];
+};
+
+/* ───────── جلب RET و RSM بخط أنابيب التطبيق نفسه ───────── */
+WS.fetchWapor = async function () {
+  if (WS.running) return;
+  if (!WS.baseReady()) {
+    WS.log('لا توجد بيانات AETI رسمية. افتح تبويب WaPOR واجلب AETI وPCP أولاً.', 'e');
+    WS.setStatus('بيانات الأساس غير متاحة', 'bad');
+    return;
+  }
+  WS.syncControls();
+  const freq = WP.config.freq;
+  const retCode = WS.RET_PREFIX + freq;
+  const periods = WP.periods, years = WP.selectedYears();
+  const btn = document.getElementById('wsFetch'), cancel = document.getElementById('wsCancel');
+  WS.running = true; WS.abort = new AbortController();
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="wp-spin"></span> جارٍ الجلب...'; }
+  if (cancel) cancel.disabled = false;
+  WS.setStatus('قراءة فهرس WaPOR', 'busy');
+  WS.setLoad(true, 'فهرس RET وRSM...', 4);
+  WS.log('بدء جلب ' + retCode + ' + الرطوبة النسبية للتربة · ' + years[0] + '–' + years[years.length - 1] + '.');
+  try {
+    await WP.ensureGeoTIFF();
+    const retAll = await WP.collectRasters(retCode, WS.abort.signal);
+    let rsmCode = WS.RSM_CODE_L2, rsmAll = [];
+    try {
+      rsmAll = await WP.collectRasters(rsmCode, WS.abort.signal);
+    } catch (e) {
+      WS.log('تعذر فهرس ' + rsmCode + ': ' + e.message + WS.hint(e), 'w');
+    }
+    if (!rsmAll.length) {
+      rsmCode = WS.RSM_CODE_L1;
+      WS.log('تحويل إلى الرطوبة العالمية ' + rsmCode + ' (300 م) بديلاً عن الوطنية.', 'w');
+      rsmAll = await WP.collectRasters(rsmCode, WS.abort.signal);
+    }
+    WS.rsmLevel = rsmCode;
+    const ys = new Set(years);
+    const inYears = function (x) { return ys.has(+WP.memberOf(x).year); };
+    const retMap = new Map(retAll.filter(inYears).map(function (x) { return [WP.periodKey(x), x]; }));
+    const rsmMap = new Map();
+    rsmAll.filter(inYears).forEach(function (x) {
+      const m = WP.memberOf(x), code = String(m.code || '');
+      if (code) rsmMap.set(code, x);
+    });
+    const next = WS.blankSeries(), rsmBuckets = {};
+    const tasks = [];
+    periods.forEach(function (p, i) {
+      const r = retMap.get(p.key);
+      if (r) tasks.push({ kind: 'ret', meta: r, pi: i });
+      WS.dekadKeys(p).forEach(function (dk) {
+        const s = rsmMap.get(dk);
+        if (s) tasks.push({ kind: 'rsm', meta: s, pi: i, dk: dk });
+      });
+    });
+    if (!tasks.some(function (t) { return t.kind === 'ret'; }))
+      throw new Error('لا توجد رسترات ' + retCode + ' للسنوات المختارة');
+    WS.log('الفهرس: ' + retMap.size + ' RET · ' + rsmMap.size + ' RSM · ' + tasks.length + ' مهمة قراءة.', 's');
+    WS.setStatus('قراءة COG لنطاق الجيزة', 'busy');
+    let done = 0, failed = 0, errs = [];
+    await WP.runPool(tasks, 3, async function (task) {
+      if (WS.abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      try {
+        const grid = await WP.readCogGrid(task.meta, WS.abort.signal);
+        if (task.kind === 'ret') {
+          WP.applyGrid(grid, task.pi, 'ret', next);
+        } else {
+          const tmp = WS.blankSeries();
+          WP.applyGrid(grid, task.pi, 'rsm', tmp);
+          if (!rsmBuckets[task.pi]) rsmBuckets[task.pi] = {};
+          (WP.cells || []).forEach(function (c) {
+            const v = tmp[c.id][task.pi].rsm;
+            if (Number.isFinite(v)) {
+              if (!rsmBuckets[task.pi][c.id]) rsmBuckets[task.pi][c.id] = [];
+              rsmBuckets[task.pi][c.id].push(v);
+            }
+          });
+        }
+      } catch (e) {
+        if (e.name === 'AbortError') throw e;
+        failed++; errs.push(task.meta.code + ': ' + e.message);
+      } finally {
+        done++;
+        WS.setLoad(true, 'قراءة ' + task.meta.code + ' · ' + done + '/' + tasks.length,
+          6 + done / Math.max(1, tasks.length) * 88);
+      }
+    });
+    /* متوسط عشرات الرطوبة داخل كل فترة + كشف مقياس القيم بأمانة */
+    let rsmVals = [];
+    Object.keys(rsmBuckets).forEach(function (pi) {
+      Object.keys(rsmBuckets[pi]).forEach(function (cid) {
+        const a = rsmBuckets[pi][cid];
+        const m = a.reduce(function (s, x) { return s + x; }, 0) / a.length;
+        next[cid][+pi].rsm = m;
+        rsmVals.push(m);
+      });
+    });
+    const rsmMax = rsmVals.length ? Math.max.apply(null, rsmVals) : 0;
+    let factor = 1;
+    if (rsmVals.length && rsmMax <= 1.5) { factor = 100; WS.rsmScaleNote = 'كسر عشرى ×100'; }
+    else if (rsmMax > 150) { factor = 100 / rsmMax > 0 ? 1 : 1; WS.rsmScaleNote = 'قيم خارج المدى المتوقع — تُعرض كما هى'; }
+    else WS.rsmScaleNote = 'نسبة مئوية مباشرة';
+    if (factor !== 1) {
+      Object.keys(next).forEach(function (cid) {
+        next[cid].forEach(function (x) { if (Number.isFinite(x.rsm)) x.rsm = x.rsm * factor; });
+      });
+    }
+    let nRet = 0, nRsm = 0;
+    Object.keys(next).forEach(function (cid) {
+      next[cid].forEach(function (x) {
+        if (Number.isFinite(x.ret)) nRet++;
+        if (Number.isFinite(x.rsm)) nRsm++;
+      });
+    });
+    if (!nRet) throw new Error('لم تُقرأ أى قيمة من رسترات RET');
+    WS.series = next;
+    WS.ready = true;
+    WS.setLoad(true, 'اكتملت القراءة', 100);
+    const cov = nRet / Math.max(1, (WP.cells.length * periods.length)) * 100;
+    WS.setStatus(cov >= 80 ? 'RET وRSM جاهزان' : 'قراءة جزئية — توجد فجوات', cov >= 80 ? 'ok' : 'busy');
+    WS.log('اكتمل: RET ' + nRet + ' قيمة · RSM ' + nRsm + ' قيمة (' + WS.rsmLevel + '، ' + WS.rsmScaleNote + ') · أخطاء ' + failed + '.', failed ? 'w' : 's');
+    if (errs.length) WS.log('أول خطأ: ' + errs[0] + WS.hint({ message: errs[0] }), 'e');
+    if (!nRsm) WS.log('لا توجد رطوبة تربة للفترات المختارة — التشخيص سيقف عند «يلزم معاينة» فى الخلايا المجهدة.', 'w');
+    WS.compute();
+  } catch (e) {
+    if (e.name === 'AbortError') { WS.log('أُلغيت العملية.', 'w'); WS.setStatus('تم الإلغاء', ''); }
+    else { WS.log('تعذّر الجلب: ' + e.message + WS.hint(e), 'e'); WS.setStatus('فشل الجلب: ' + e.message, 'bad'); }
+  } finally {
+    WS.running = false; WS.abort = null;
+    if (btn) { btn.disabled = false; btn.textContent = 'جلب RET ورطوبة التربة'; }
+    if (cancel) cancel.disabled = true;
+    WS.setLoad(false, '', 0);
+    WS.saveConfig();
+  }
+};
+WS.cancel = function () { if (WS.abort) WS.abort.abort(); };
+
+/* ───────── NDMI من Sentinel-2 على البكسلات المزروعة فقط ───────── */
+WS.bbox = function () {
+  const cs = WP.cells || [];
+  if (!cs.length) return null;
+  const km = Math.sqrt(cs[0].km2 || 1), d = km / 222;
+  return {
+    la0: Math.min.apply(null, cs.map(function (c) { return c.la; })) - d,
+    la1: Math.max.apply(null, cs.map(function (c) { return c.la; })) + d,
+    lo0: Math.min.apply(null, cs.map(function (c) { return c.lo; })) - d,
+    lo1: Math.max.apply(null, cs.map(function (c) { return c.lo; })) + d
+  };
+};
+WS.searchScene = async function (signal) {
+  const b = WS.bbox();
+  if (!b) throw new Error('لا توجد شبكة خلايا');
+  const to = new Date(), from = new Date(Date.now() - Math.max(5, WS.config.sceneDays) * 864e5);
+  const iso = function (d) { return d.toISOString().slice(0, 10); };
+  const u = new URL(WW.API);
+  u.searchParams.set('collections', WW.COLLECTION);
+  u.searchParams.set('bbox', [b.lo0, b.la0, b.lo1, b.la1].join(','));
+  u.searchParams.set('datetime', iso(from) + 'T00:00:00Z/' + iso(to) + 'T23:59:59Z');
+  u.searchParams.set('limit', '100');
+  u.searchParams.set('sortby', '-properties.datetime');
+  const data = await WW.fetchJSON(u.href, signal);
+  const ok = (data.features || []).filter(function (f) {
+    const a = f.assets || {};
+    return WW.itemCloud(f) <= WS.config.cloudMax && WS.NDMI_ASSETS.every(function (k) { return a[k] && a[k].href; });
+  });
+  const groups = new Map();
+  ok.forEach(function (f) {
+    const dt = String((f.properties || {}).datetime || '').slice(0, 10);
+    if (!dt) return;
+    const g = groups.get(dt) || { date: dt, items: [] };
+    g.items.push(f); groups.set(dt, g);
+  });
+  const list = Array.from(groups.values()).sort(function (a, b2) { return a.date < b2.date ? 1 : -1; });
+  if (!list.length) throw new Error('لا توجد لقطة بسحابة أقل من ' + WS.config.cloudMax + '٪ خلال ' + WS.config.sceneDays + ' يوماً');
+  return list[0];
+};
+WS.readTile = async function (item, signal, acc) {
+  const epsg = +((item.properties || {})['proj:epsg']) || 32636;
+  if (epsg !== 32635 && epsg !== 32636) throw new Error('نظام إحداثيات غير مدعوم EPSG:' + epsg);
+  const cells = WS.cropCells().map(function (c) {
+    const u = WW.toUtm(c.la, c.lo, epsg);
+    return { c: c, x: u.x, y: u.y };
+  });
+  const readers = {};
+  for (let i = 0; i < WS.NDMI_ASSETS.length; i++) {
+    const k = WS.NDMI_ASSETS[i];
+    readers[k] = await WW.openAsset(item, k);
+  }
+  const bb = readers.nir.bbox;
+  const inside = cells.filter(function (p) {
+    return p.x > bb[0] && p.x < bb[2] && p.y > bb[1] && p.y < bb[3];
+  });
+  if (!inside.length) return 0;
+  const km = Math.sqrt((WP.cells[0] || {}).km2 || 1), half = km * 1000 / 2;
+  const pad = half + WS.PIXEL_M;
+  let minX = Math.max(bb[0], Math.min.apply(null, inside.map(function (p) { return p.x; })) - pad);
+  let maxX = Math.min(bb[2], Math.max.apply(null, inside.map(function (p) { return p.x; })) + pad);
+  let minY = Math.max(bb[1], Math.min.apply(null, inside.map(function (p) { return p.y; })) - pad);
+  let maxY = Math.min(bb[3], Math.max.apply(null, inside.map(function (p) { return p.y; })) + pad);
+  const W = Math.max(4, Math.min(1200, Math.round((maxX - minX) / WS.PIXEL_M)));
+  const H = Math.max(4, Math.min(1200, Math.round((maxY - minY) / WS.PIXEL_M)));
+  const dx = (maxX - minX) / W, dy = (maxY - minY) / H;
+  const bands = {};
+  for (let i = 0; i < WS.NDMI_ASSETS.length; i++) {
+    const k = WS.NDMI_ASSETS[i], r = readers[k], rb = r.bbox;
+    const rx = (rb[2] - rb[0]) / r.width, ry = (rb[3] - rb[1]) / r.height;
+    const x0 = Math.max(0, Math.floor((minX - rb[0]) / rx)), x1 = Math.min(r.width, Math.ceil((maxX - rb[0]) / rx));
+    const y0 = Math.max(0, Math.floor((rb[3] - maxY) / ry)), y1 = Math.min(r.height, Math.ceil((rb[3] - minY) / ry));
+    if (x1 <= x0 || y1 <= y0) throw new Error('نافذة الرستر فارغة للنطاق ' + k);
+    if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    const raw = await r.image.readRasters({
+      window: [x0, y0, x1, y1], width: W, height: H, samples: [0],
+      interleave: true, resampleMethod: 'nearest', signal: signal
+    });
+    const out = new Float32Array(raw.length);
+    for (let j = 0; j < raw.length; j++) {
+      const v = raw[j];
+      out[j] = (!Number.isFinite(v) || (r.nodata != null && v === r.nodata) || (v === 0 && k !== 'scl'))
+        ? NaN : v * r.scale + r.offset;
+    }
+    bands[k] = out;
+    WS.setLoad(true, 'قراءة ' + k + ' من لقطة ' + WS.scene.date, 30 + (i + 1) * 12);
+  }
+  const rad = Math.max(1, Math.round(half / WS.PIXEL_M));
+  let filled = 0;
+  inside.forEach(function (p) {
+    const cx = Math.floor((p.x - minX) / dx), cy = Math.floor((maxY - p.y) / dy);
+    let sum = 0, n = 0, veg = 0, tot = 0;
+    for (let yy = cy - rad; yy <= cy + rad; yy++) {
+      if (yy < 0 || yy >= H) continue;
+      for (let xx = cx - rad; xx <= cx + rad; xx++) {
+        if (xx < 0 || xx >= W) continue;
+        const i = yy * W + xx;
+        const red = bands.red[i], nir = bands.nir[i], swir = bands.swir16[i], scl = bands.scl[i];
+        if (![red, nir, swir].every(Number.isFinite) || !WW.validScl(scl)) continue;
+        if (Math.round(scl) === 6) continue;                       /* مياه مكشوفة */
+        tot++;
+        const ndvi = (nir - red) / (nir + red || 1e-9);
+        if (ndvi < WS.config.vegNdvi) continue;                    /* غير مزروع — NDMI بلا معنى */
+        veg++;
+        sum += (nir - swir) / (nir + swir || 1e-9);
+        n++;
+      }
+    }
+    if (n >= 3) {
+      const prev = acc[p.c.id];
+      const rec = { v: sum / n, n: n, veg: tot ? veg / tot * 100 : 0 };
+      acc[p.c.id] = prev ? { v: (prev.v * prev.n + sum) / (prev.n + n), n: prev.n + n, veg: Math.max(prev.veg, rec.veg) } : rec;
+      filled++;
+    }
+  });
+  return filled;
+};
+WS.fetchNdmi = async function () {
+  if (WS.running) return;
+  if (!(WP.cells || []).length) { WS.log('ابنِ شبكة الخلايا من تبويب WaPOR أولاً.', 'e'); return; }
+  const btn = document.getElementById('wsNdmi');
+  WS.running = true; WS.abort = new AbortController();
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="wp-spin"></span> جارٍ...'; }
+  WS.setStatus('البحث فى فهرس Sentinel-2', 'busy');
+  WS.setLoad(true, 'فهرس اللقطات...', 8);
+  try {
+    await WP.ensureGeoTIFF();
+    WS.scene = await WS.searchScene(WS.abort.signal);
+    WS.log('لقطة ' + WS.scene.date + ' · ' + WS.scene.items.length + ' بلاطة · سحابة ' +
+      Math.round(WW.itemCloud(WS.scene.items[0])) + '٪.', 's');
+    const acc = {};
+    let filled = 0;
+    for (let i = 0; i < WS.scene.items.length; i++) {
+      if (WS.abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      try {
+        filled += await WS.readTile(WS.scene.items[i], WS.abort.signal, acc);
+      } catch (e) {
+        if (e.name === 'AbortError') throw e;
+        WS.log('بلاطة ' + (i + 1) + ': ' + e.message + WS.hint(e), 'w');
+      }
+    }
+    if (!filled) throw new Error('لم تُقرأ قيم NDMI صالحة من أى بلاطة');
+    WS.ndmi = acc;
+    WS.log('NDMI: ' + filled + ' خلية من ' + WS.cropCells().length + ' خلية زراعية.', 's');
+    WS.setStatus('NDMI جاهز · لقطة ' + WS.scene.date, 'ok');
+    WS.compute();
+  } catch (e) {
+    if (e.name === 'AbortError') { WS.log('أُلغى جلب NDMI.', 'w'); }
+    else { WS.log('تعذّر جلب NDMI: ' + e.message + WS.hint(e), 'e'); WS.setStatus('فشل NDMI: ' + e.message, 'bad'); }
+  } finally {
+    WS.running = false; WS.abort = null;
+    if (btn) { btn.disabled = false; btn.textContent = 'تأكيد بصرى بـ NDMI'; }
+    WS.setLoad(false, '', 0);
+    WS.saveConfig();
+  }
+};
+
+/* ───────── الدليل الهيدروليكى: المنصرف مقابل الاحتياج ───────── */
+WS.dbRef = function () {
+  /* تحذير: DB معلَّن بـ const فى بلوك سكربت سابق فلا يوجد على window —
+     يُقرأ باسمه المجرد (البلوكات الكلاسيكية تتشارك النطاق المعجمى). */
+  if (typeof DB !== 'undefined' && DB) return DB;
+  return window.DB || window.__DB || null;
+};
+WS.deliveredMcm = function (p) {
+  /* مجموع تصرف المغذيات خلال الفترة من قاعدة الأورنيك اليومى — بلا أى تقدير */
+  const _db = WS.dbRef();
+  if (!_db || !_db.series) return null;
+  const yr = _db.series[p.yr];
+  if (!yr || !yr.flows || !yr.flows.__total__) return null;
+  let sum = 0, n = 0;
+  yr.flows.__total__.forEach(function (r) {
+    if (!r || !r.date || r.val == null) return;
+    if (r.date >= p.startDate && r.date <= p.endDate) { sum += r.val; n++; }
+  });
+  if (!n) return null;
+  /* القراءات اليومية بالمليون م³/يوم — تُستكمل بالمتوسط عند نقص أيام */
+  const days = p.days || n;
+  return { mcm: sum / n * days, days: n, expected: days };
+};
+WS.requiredMcm = function (pi, p) {
+  const peEl = document.getElementById('wpPE');
+  const pe = (peEl ? +peEl.value : (WP.eff.pe || 70)) / 100;
+  let need = 0, used = 0;
+  WS.cropCells().forEach(function (c) {
+    const x = (WP.series[c.id] || [])[pi];
+    if (!x || !Number.isFinite(x.aeti)) return;
+    const net = Math.max(0, x.aeti - (Number.isFinite(x.pcp) ? x.pcp : 0) * pe);
+    const area = c.km2e || c.km2;
+    need += (net / 1000) * area / WP.effOf(c.z);
+    used++;
+  });
+  return used ? need : null;
+};
+WS.supplyStatus = function (pi) {
+  const p = WP.periods[pi];
+  if (!p) return { state: 'unknown' };
+  const dl = WS.deliveredMcm(p), rq = WS.requiredMcm(pi, p);
+  if (!dl || !Number.isFinite(rq) || !(rq > 0)) return { state: 'unknown', delivered: dl ? dl.mcm : null, required: rq };
+  const ratio = dl.mcm / rq;
+  return {
+    state: ratio < 0.9 ? 'deficit' : ratio > 1.25 ? 'surplus' : 'adequate',
+    ratio: ratio, delivered: dl.mcm, required: rq, days: dl.days, expected: dl.expected
+  };
+};
+
+/* ───────── الحساب والتشخيص ───────── */
+WS.periodIndex = function () {
+  const v = WS.config.period;
+  const n = (WP.periods || []).length;
+  if (v === 'all') return -1;
+  if (v === 'last' || !Number.isFinite(+v)) {
+    for (let i = n - 1; i >= 0; i--) {
+      const any = WS.cropCells().some(function (c) {
+        const a = (WP.series[c.id] || [])[i], b = (WS.series[c.id] || [])[i];
+        return a && Number.isFinite(a.aeti) && b && Number.isFinite(b.ret);
+      });
+      if (any) return i;
+    }
+    return n - 1;
+  }
+  return Math.max(0, Math.min(n - 1, +v));
+};
+WS.etf = function (cid, pi) {
+  const a = (WP.series[cid] || [])[pi], b = (WS.series[cid] || [])[pi];
+  if (!a || !b || !Number.isFinite(a.aeti) || !Number.isFinite(b.ret) || !(b.ret > 0)) return NaN;
+  return a.aeti / b.ret;
+};
+WS.compute = function () {
+  if (!WS.baseReady() || !WS.ready) { WS.render(); return; }
+  WS.syncControls();
+  const periods = WP.periods, crop = WS.cropCells();
+  const pi = WS.periodIndex();
+  const idxList = pi < 0 ? periods.map(function (p, i) { return i; }) : [pi];
+  /* مرجع النظائر: مئين ETf داخل الهندسة لكل فترة — يلغى أثر المحصول والجو */
+  const ref = {};
+  idxList.forEach(function (i) {
+    ref[i] = {};
+    WS.dists().forEach(function (d) {
+      const vals = crop.filter(function (c) { return c.z === d.id; })
+        .map(function (c) { return WS.etf(c.id, i); }).filter(Number.isFinite);
+      ref[i][d.id] = vals.length >= 5 ? WS.pctl(vals, WS.config.refPct) : NaN;
+    });
+    const allv = crop.map(function (c) { return WS.etf(c.id, i); }).filter(Number.isFinite);
+    ref[i].__all = allv.length ? WS.pctl(allv, WS.config.refPct) : NaN;
+  });
+  /* حالة الإمداد */
+  WS.supply = {};
+  idxList.forEach(function (i) { WS.supply[i] = WS.supplyStatus(i); });
+  const supMain = pi < 0 ? WS.aggSupply(idxList) : WS.supply[pi];
+  /* إحصاء الخلايا */
+  WS.cellStat = {};
+  const th = WS.config.defTh / 100;
+  const ndmiByDist = {};
+  crop.forEach(function (c) {
+    const nd = WS.ndmi[c.id];
+    if (nd && Number.isFinite(nd.v)) {
+      if (!ndmiByDist[c.z]) ndmiByDist[c.z] = [];
+      ndmiByDist[c.z].push(nd.v);
+    }
+  });
+  const ndmiRef = {};
+  Object.keys(ndmiByDist).forEach(function (z) { ndmiRef[z] = WS.pctl(ndmiByDist[z], 30); });
+  crop.forEach(function (c) {
+    const etfs = [], rsms = [], retis = [], aetis = [];
+    idxList.forEach(function (i) {
+      const e = WS.etf(c.id, i);
+      const r0 = ref[i][c.z], r1 = Number.isFinite(r0) ? r0 : ref[i].__all;
+      const x = (WS.series[c.id] || [])[i], a = (WP.series[c.id] || [])[i];
+      if (Number.isFinite(e)) {
+        etfs.push(e);
+        if (Number.isFinite(r1) && r1 > 0) retis.push(Math.min(1, e / r1));
+      }
+      if (x && Number.isFinite(x.rsm)) rsms.push(x.rsm);
+      if (a && Number.isFinite(a.aeti)) aetis.push(a.aeti);
+    });
+    const reti = WS.meanOf(retis), rsm = WS.meanOf(rsms);
+    const def = Number.isFinite(reti) ? 1 - reti : NaN;
+    const nd = WS.ndmi[c.id];
+    const ndv = nd && Number.isFinite(nd.v) ? nd.v : NaN;
+    const ndLow = Number.isFinite(ndv) && Number.isFinite(ndmiRef[c.z]) ? ndv <= ndmiRef[c.z] : null;
+    const dg = WS.diagnose(def, rsm, ndLow, supMain, th);
+    WS.cellStat[c.id] = {
+      etf: WS.meanOf(etfs), reti: reti, def: def, rsm: rsm, aeti: WS.meanOf(aetis),
+      ndmi: ndv, veg: nd ? nd.veg : NaN, ndLow: ndLow, diag: dg
+    };
+  });
+  /* مؤشرات الأداء لكل هندسة: كفاية · عدالة · اعتمادية */
+  WS.indic = {};
+  WS.dists().forEach(function (d) {
+    const cs = crop.filter(function (c) { return c.z === d.id; });
+    const st = cs.map(function (c) { return WS.cellStat[c.id]; }).filter(Boolean);
+    const adequacy = WS.meanOf(st.map(function (x) { return x.reti; })) * 100;
+    const equity = WS.cvOf(st.map(function (x) { return x.aeti; }));
+    const tSeries = periods.map(function (p, i) {
+      return WS.meanOf(cs.map(function (c) { return WS.etf(c.id, i); }));
+    }).filter(Number.isFinite);
+    const reliability = WS.cvOf(tSeries);
+    const counts = {};
+    st.forEach(function (x) { counts[x.diag.code] = (counts[x.diag.code] || 0) + 1; });
+    WS.indic[d.id] = {
+      cells: st.length, adequacy: adequacy, equity: equity, reliability: reliability,
+      rsm: WS.meanOf(st.map(function (x) { return x.rsm; })),
+      ndmi: WS.meanOf(st.map(function (x) { return x.ndmi; })),
+      stressed: st.filter(function (x) { return Number.isFinite(x.def) && x.def >= th; }).length,
+      counts: counts, fd: (WP.BR.find(function (b) { return b.id === d.id; }) || {}).fd || 0
+    };
+  });
+  WS.counts = {};
+  Object.keys(WS.cellStat).forEach(function (k) {
+    const code = WS.cellStat[k].diag.code;
+    WS.counts[code] = (WS.counts[code] || 0) + 1;
+  });
+  WS.diagRows = crop.map(function (c) { return { c: c, s: WS.cellStat[c.id] }; })
+    .filter(function (r) { return r.s; })
+    .sort(function (a, b) { return (b.s.def || -1) - (a.s.def || -1); });
+  WS.mainPi = pi;
+  WS.mainSupply = supMain;
+  WS.render();
+};
+WS.aggSupply = function (idxList) {
+  let dl = 0, rq = 0, nd = 0;
+  idxList.forEach(function (i) {
+    const s = WS.supply[i];
+    if (s && Number.isFinite(s.delivered) && Number.isFinite(s.required)) { dl += s.delivered; rq += s.required; nd++; }
+  });
+  if (!nd || !(rq > 0)) return { state: 'unknown' };
+  const ratio = dl / rq;
+  return { state: ratio < 0.9 ? 'deficit' : ratio > 1.25 ? 'surplus' : 'adequate', ratio: ratio, delivered: dl, required: rq };
+};
+WS.diagnose = function (def, rsm, ndLow, sup, th) {
+  const D = WS.DIAG;
+  if (!Number.isFinite(def)) return { code: 'check', l: D.check.l, c: D.check.c, why: 'لا توجد قيم ETa/ETo كافية لهذه الخلية.' };
+  const stressed = def >= th;
+  if (!stressed) {
+    if (Number.isFinite(rsm) && rsm >= WS.config.rsmHigh + 15 && sup && sup.state === 'surplus')
+      return { code: 'over', l: D.over.l, c: D.over.c, why: 'لا إجهاد مع رطوبة تربة مرتفعة وإمداد يفوق الاحتياج.' };
+    return { code: 'ok', l: D.ok.l, c: D.ok.c, why: 'نسبة البخر قريبة من أفضل النظائر داخل الهندسة.' };
+  }
+  const visual = ndLow === true ? ' وتأكيد بصرى منخفض بـ NDMI' : ndLow === false ? ' مع NDMI غير مؤكِّد' : '';
+  if (Number.isFinite(rsm) && rsm >= WS.config.rsmHigh)
+    return {
+      code: 'root', l: D.root.l, c: D.root.c,
+      why: 'عجز بخر ' + Math.round(def * 100) + '٪ ورطوبة تربة ' + Math.round(rsm) + '٪ — المياه موجودة والنبات لا يمتصها' + visual + '.'
+    };
+  if (Number.isFinite(rsm) && rsm <= WS.config.rsmLow) {
+    if (sup && sup.state === 'deficit')
+      return { code: 'supply', l: D.supply.l, c: D.supply.c, why: 'عجز بخر ' + Math.round(def * 100) + '٪ مع تربة جافة ' + Math.round(rsm) + '٪ وإمداد كلى أقل من الاحتياج' + visual + '.' };
+    if (sup && (sup.state === 'adequate' || sup.state === 'surplus'))
+      return { code: 'dist', l: D.dist.l, c: D.dist.c, why: 'عجز بخر ' + Math.round(def * 100) + '٪ مع تربة جافة ' + Math.round(rsm) + '٪ رغم كفاية الإمداد الكلى' + visual + '.' };
+    return { code: 'supply', l: D.supply.l, c: D.supply.c, why: 'عجز بخر ' + Math.round(def * 100) + '٪ مع تربة جافة ' + Math.round(rsm) + '٪ (الإمداد الكلى غير معلوم)' + visual + '.' };
+  }
+  return {
+    code: 'check', l: D.check.l, c: D.check.c,
+    why: 'عجز بخر ' + Math.round(def * 100) + '٪ ورطوبة التربة ' +
+      (Number.isFinite(rsm) ? 'وسطية ' + Math.round(rsm) + '٪' : 'غير متاحة') + ' — لا يُحسم السبب مكتبياً' + visual + '.'
+  };
+};
+
+/* ───────── الواجهة ───────── */
+WS.viewHtml = function () {
+  const D = WS.DIAG;
+  let h = '<section class="wapor-shell">';
+  h += '<div class="panel"><div class="panel-head">' +
+    '<div class="panel-title">💧 الإجهاد المائى والتشخيص الرباعى</div>' +
+    '<span id="wsState" class="wp-bdg">لم تُجلب البيانات</span></div><div class="panel-body">' +
+    '<div class="wp-note"><b>المنهج:</b> الإجهاد يُقاس بنسبة البخر الفعلى إلى المرجعى (ETa/ETo) منسوبةً إلى ' +
+    'أفضل النظائر داخل الهندسة نفسها فى نفس الفترة — فيلغى المرجع أثر نوع المحصول والجو ويتبقى أثر الإدارة المائية. ' +
+    'ثم تُفصل الأسباب برطوبة التربة من WaPOR: <b>تربة جافة = عطش حقيقى</b>، و<b>تربة مروية مع إجهاد = مشكلة جذور أو ملوحة أو صرف ' +
+    'وزيادة المياه فيها ضرر لا علاج</b>.</div>';
+  h += '<div class="wp-grid wp-g3">' +
+    WS.fld('عتبة العجز المعتبر إجهاداً ٪', '<input id="wsTh" type="number" min="5" max="60" step="1" value="' + WS.config.defTh + '">') +
+    WS.fld('حد التربة الجافة ٪ (RSM)', '<input id="wsRL" type="number" min="5" max="60" step="1" value="' + WS.config.rsmLow + '">') +
+    WS.fld('حد التربة المروية ٪ (RSM)', '<input id="wsRH" type="number" min="40" max="95" step="1" value="' + WS.config.rsmHigh + '">') +
+    WS.fld('مئين مرجع النظائر', '<select id="wsRef">' +
+      [80, 85, 90, 95].map(function (v) { return '<option value="' + v + '"' + (WS.config.refPct === v ? ' selected' : '') + '>' + v + '٪</option>'; }).join('') +
+      '</select>') +
+    WS.fld('عشرات الرطوبة داخل الشهر', '<select id="wsRsmMode">' +
+      '<option value="mid"' + (WS.config.rsmMode === 'mid' ? ' selected' : '') + '>الوسطى فقط (أسرع)</option>' +
+      '<option value="all"' + (WS.config.rsmMode === 'all' ? ' selected' : '') + '>الثلاث ومتوسطها</option></select>') +
+    WS.fld('الفترة المعروضة', '<select id="wsPeriod"></select>') +
+    '</div>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">' +
+    '<button class="dr-btn primary" id="wsFetch" onclick="WS.fetchWapor()">جلب RET ورطوبة التربة</button>' +
+    '<button class="dr-btn" id="wsNdmi" onclick="WS.fetchNdmi()">تأكيد بصرى بـ NDMI</button>' +
+    '<button class="dr-btn outline" id="wsCancel" onclick="WS.cancel()" disabled>إلغاء</button>' +
+    '<button class="dr-btn outline" onclick="WS.compute()">إعادة الحساب</button>' +
+    '<button class="dr-btn outline" onclick="WS.exportCsv()">تصدير CSV</button></div>' +
+    '<div class="wp-prog"><i id="wsProg"></i></div><div class="wp-hint" id="wsProgLab"></div>' +
+    '<div class="wp-hint" id="wsSrc"></div></div></div>';
+  h += '<div class="wp-grid wp-g4" id="wsKpis"></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">🧭 مصفوفة التشخيص</div>' +
+    '<span class="wp-hint" id="wsMatrixNote"></span></div><div class="panel-body">' +
+    '<div id="wsMatrix"><div class="wp-empty"><b>فى انتظار البيانات</b>اجلب RET ورطوبة التربة لبناء التشخيص.</div></div>' +
+    '<div class="wp-note w" style="margin-top:12px"><b>حدود المعرفة:</b> التصرف المُقاس متاح على مستوى المغذيات ' +
+    'للمنظومة ككل — لا توجد قياسات منفصلة لكل هندسة، فدليل الإمداد يُطبَّق كحالة عامة لا كقيمة محلية. ' +
+    'ورطوبة التربة من الأقمار تقدير نسبى لطبقة الجذور وليست قراءة سنسور حقلى.</div></div></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">🗺️ خريطة العجز</div>' +
+    '<div class="wp-seg"><button data-wsmap="def" class="on">عجز البخر</button>' +
+    '<button data-wsmap="rsm">رطوبة التربة</button><button data-wsmap="ndmi">NDMI</button>' +
+    '<button data-wsmap="diag">التشخيص</button></div></div><div class="panel-body">' +
+    '<canvas id="wsMap" class="wp-map" height="330"></canvas><div class="wp-lgd" id="wsLgd"></div>' +
+    '<div id="wsPick" class="wp-note" style="margin-top:10px">اضغط على أى خلية لعرض تشخيصها.</div></div></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">📊 أداء الهندسات</div>' +
+    '<span class="wp-hint">الكفاية ↑ · العدالة (تشتت) ↓ · الاعتمادية (تقلب زمنى) ↓</span></div>' +
+    '<div class="panel-body"><div class="table-scroll" style="max-height:340px"><table class="data-table">' +
+    '<thead><tr><th>الهندسة</th><th>خلايا</th><th>الزمام فدان</th><th>الكفاية</th><th>العدالة CV</th>' +
+    '<th>الاعتمادية CV</th><th>RSM</th><th>NDMI</th><th>مجهدة</th><th>أبرز تشخيص</th></tr></thead>' +
+    '<tbody id="wsDistTbl"><tr><td colspan="10"><div class="wp-empty">—</div></td></tr></tbody></table></div>' +
+    '<div style="margin-top:14px"><canvas id="wsChart" height="150"></canvas></div></div></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">📋 الخلايا مرتّبة بالعجز</div>' +
+    '<div class="wp-seg" id="wsFlt"><button data-wsflt="all" class="on">الكل</button>' +
+    '<button data-wsflt="root">جذور</button><button data-wsflt="supply">إمداد</button>' +
+    '<button data-wsflt="dist">توزيع</button><button data-wsflt="check">معاينة</button></div></div>' +
+    '<div class="panel-body"><div class="table-scroll" style="max-height:420px"><table class="data-table">' +
+    '<thead><tr><th>الخلية</th><th>الهندسة</th><th>ETa</th><th>ETa/ETo</th><th>العجز</th>' +
+    '<th>RSM</th><th>NDMI</th><th>مزروع٪</th><th>التشخيص</th></tr></thead>' +
+    '<tbody id="wsCellTbl"><tr><td colspan="9"><div class="wp-empty">—</div></td></tr></tbody></table></div></div></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">🧾 سجل التشغيل</div></div>' +
+    '<div class="panel-body"><div class="wp-log" id="wsLog"></div></div></div>';
+  h += '</section>';
+  return h;
+};
+WS.fld = function (label, inner) {
+  return '<div class="wp-fld"><label>' + label + '</label>' + inner + '</div>';
+};
+WS.fillPeriods = function () {
+  const sel = document.getElementById('wsPeriod');
+  if (!sel) return;
+  const ps = WP.periods || [];
+  let h = '<option value="last">أحدث فترة بها بيانات</option><option value="all">كل الفترات (متوسط)</option>';
+  h += ps.map(function (p, i) { return '<option value="' + i + '">' + WS.esc(p.label) + '</option>'; }).join('');
+  sel.innerHTML = h;
+  sel.value = String(WS.config.period);
+};
+WS.syncControls = function () {
+  const g = function (id) { return document.getElementById(id); };
+  const n = function (id, dflt) { const e = g(id); return e && e.value !== '' ? +e.value : dflt; };
+  WS.config.defTh = Math.max(5, Math.min(60, n('wsTh', WS.config.defTh)));
+  WS.config.rsmLow = Math.max(5, Math.min(60, n('wsRL', WS.config.rsmLow)));
+  WS.config.rsmHigh = Math.max(40, Math.min(95, n('wsRH', WS.config.rsmHigh)));
+  WS.config.refPct = n('wsRef', WS.config.refPct);
+  if (g('wsRsmMode')) WS.config.rsmMode = g('wsRsmMode').value;
+  if (g('wsPeriod')) WS.config.period = g('wsPeriod').value;
+};
+WS.render = function () {
+  WS.renderSrc();
+  WS.renderKpi();
+  WS.renderMatrix();
+  WS.renderDist();
+  WS.renderCells();
+  WS.drawMap();
+  WS.drawChart();
+  WS.renderLog();
+};
+WS.renderSrc = function () {
+  const el = document.getElementById('wsSrc');
+  if (!el) return;
+  const base = WS.baseReady() ? 'AETI/PCP: ' + WP.productCodes().aeti : 'AETI/PCP: غير مجلوبة (ابدأ من تبويب WaPOR)';
+  const ret = WS.ready ? ' · ' + WS.RET_PREFIX + WP.config.freq + ' ✓' : ' · RET غير مجلوب';
+  const rsm = WS.rsmLevel ? ' · ' + WS.rsmLevel + ' (' + WS.rsmScaleNote + ')' : ' · RSM غير مجلوب';
+  const nd = WS.scene ? ' · NDMI لقطة ' + WS.scene.date : ' · NDMI غير مُجلب';
+  el.textContent = base + ret + rsm + nd;
+};
+WS.renderKpi = function () {
+  const box = document.getElementById('wsKpis');
+  if (!box) return;
+  const st = Object.keys(WS.cellStat).map(function (k) { return WS.cellStat[k]; });
+  if (!st.length) { box.innerHTML = ''; return; }
+  const th = WS.config.defTh / 100;
+  const adequacy = WS.meanOf(st.map(function (x) { return x.reti; })) * 100;
+  const stressed = st.filter(function (x) { return Number.isFinite(x.def) && x.def >= th; }).length;
+  const root = WS.counts.root || 0;
+  const sup = WS.mainSupply || { state: 'unknown' };
+  const p = WP.periods[WS.mainPi] || null;
+  const kpi = function (cls, label, val, unit, sub) {
+    return '<div class="wp-kpi ' + cls + '"><span class="l">' + label + '</span>' +
+      '<span class="v">' + val + '<span class="u"> ' + (unit || '') + '</span></span>' +
+      '<span class="s">' + (sub || '') + '</span></div>';
+  };
+  let h = '';
+  h += kpi(adequacy >= 85 ? 'g' : adequacy >= 70 ? 'a' : 'r', 'كفاية الرى (ETa منسوبة للنظائر)',
+    WS.num(adequacy, 0), '٪', WS.config.period === 'all' ? 'متوسط كل الفترات' : (p ? p.label : '—'));
+  h += kpi(stressed / st.length > 0.25 ? 'r' : stressed ? 'a' : 'g', 'خلايا مجهدة',
+    WS.fmt(stressed), 'من ' + WS.fmt(st.length), 'عتبة العجز ' + WS.config.defTh + '٪');
+  h += kpi(root ? 'r' : 'g', 'تربة مروية والنبات لا يشرب',
+    WS.fmt(root), 'خلية', root ? 'ممنوع زيادة المياه — معاينة جذور' : 'لا حالات مرصودة');
+  h += kpi(sup.state === 'deficit' ? 'r' : sup.state === 'surplus' ? 'a' : sup.state === 'adequate' ? 'g' : '',
+    'الإمداد الكلى ÷ الاحتياج الصافى',
+    Number.isFinite(sup.ratio) ? WS.num(sup.ratio, 2) : '—', '',
+    Number.isFinite(sup.delivered) ? WS.num(sup.delivered, 1) + ' مقابل ' + WS.num(sup.required, 1) + ' مليون م³' : 'قراءات المغذيات غير متاحة لهذه الفترة');
+  box.innerHTML = h;
+};
+WS.renderMatrix = function () {
+  const box = document.getElementById('wsMatrix');
+  if (!box) return;
+  const total = Object.keys(WS.cellStat).length;
+  if (!total) return;
+  const order = ['root', 'supply', 'dist', 'check', 'over', 'ok'];
+  let h = '<div class="wp-grid wp-g3">';
+  order.forEach(function (code) {
+    const n = WS.counts[code] || 0;
+    const D = WS.DIAG[code];
+    h += '<div class="panel" style="border-inline-start:4px solid ' + D.c + '"><div class="panel-body" style="padding:12px">' +
+      '<div style="font-weight:700;color:' + D.c + ';font-size:.86rem">' + D.l + '</div>' +
+      '<div style="font-family:var(--mono);font-size:1.3rem;font-weight:700">' + WS.fmt(n) +
+      '<span style="font-size:.7rem;font-weight:400"> خلية · ' + (total ? (n / total * 100).toFixed(0) : 0) + '٪</span></div>' +
+      '<div class="wp-hint">' + D.a + '</div></div></div>';
+  });
+  h += '</div>';
+  box.innerHTML = h;
+  const note = document.getElementById('wsMatrixNote');
+  if (note) {
+    const sup = WS.mainSupply || { state: 'unknown' };
+    const lbl = { deficit: 'الإمداد الكلى أقل من الاحتياج', adequate: 'الإمداد الكلى كافٍ', surplus: 'الإمداد يفوق الاحتياج', unknown: 'حالة الإمداد غير معلومة' };
+    note.textContent = lbl[sup.state] + ' · ' + WS.fmt(total) + ' خلية زراعية';
+  }
+};
+WS.renderDist = function () {
+  const tb = document.getElementById('wsDistTbl');
+  if (!tb) return;
+  const ids = Object.keys(WS.indic);
+  if (!ids.length) return;
+  const rows = WS.dists().filter(function (d) { return WS.indic[d.id] && WS.indic[d.id].cells; });
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="10"><div class="wp-empty">لا خلايا محسوبة</div></td></tr>'; return; }
+  tb.innerHTML = rows.map(function (d) {
+    const x = WS.indic[d.id];
+    let top = 'ok', tn = -1;
+    Object.keys(x.counts).forEach(function (k) { if (k !== 'ok' && x.counts[k] > tn) { tn = x.counts[k]; top = k; } });
+    const D = WS.DIAG[top] || WS.DIAG.ok;
+    const cls = x.adequacy >= 85 ? 'wp-t-c' : x.adequacy >= 70 ? 'wp-t-e' : 'wp-t-u';
+    return '<tr><td><b style="color:' + d.c + '">' + WS.esc(d.n) + '</b></td>' +
+      '<td>' + WS.fmt(x.cells) + '</td><td>' + WS.fmt(x.fd) + '</td>' +
+      '<td><span class="wp-tag ' + cls + '">' + WS.pct(x.adequacy) + '</span></td>' +
+      '<td>' + WS.pct(x.equity) + '</td><td>' + WS.pct(x.reliability) + '</td>' +
+      '<td>' + WS.pct(x.rsm) + '</td><td>' + WS.num(x.ndmi, 3) + '</td>' +
+      '<td>' + WS.fmt(x.stressed) + '</td>' +
+      '<td><span style="color:' + D.c + ';font-weight:700">' + (tn > 0 ? D.l + ' (' + tn + ')' : '—') + '</span></td></tr>';
+  }).join('');
+};
+WS.renderCells = function () {
+  const tb = document.getElementById('wsCellTbl');
+  if (!tb) return;
+  const flt = WS.filter || 'all';
+  const rows = WS.diagRows.filter(function (r) { return flt === 'all' || r.s.diag.code === flt; }).slice(0, 300);
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="9"><div class="wp-empty">لا نتائج</div></td></tr>'; return; }
+  tb.innerHTML = rows.map(function (r) {
+    const s = r.s, D = s.diag;
+    return '<tr><td style="font-family:var(--mono)">' + WS.esc(r.c.id) + '</td>' +
+      '<td>' + WS.esc(WS.distName(r.c.z)) + '</td>' +
+      '<td>' + WS.num(s.aeti, 1) + '</td><td>' + WS.num(s.etf, 2) + '</td>' +
+      '<td><b>' + (Number.isFinite(s.def) ? WS.pct(s.def * 100) : '—') + '</b></td>' +
+      '<td>' + WS.pct(s.rsm) + '</td><td>' + WS.num(s.ndmi, 3) + '</td>' +
+      '<td>' + WS.pct(s.veg) + '</td>' +
+      '<td><span style="color:' + D.c + ';font-weight:700">' + D.l + '</span>' +
+      '<div class="wp-hint">' + WS.esc(D.why) + '</div></td></tr>';
+  }).join('');
+};
+WS.mapMode = 'def';
+WS.filter = 'all';
+WS.colorOf = function (c) {
+  const s = WS.cellStat[c.id];
+  if (!s) return '#cfd8dc';
+  if (WS.mapMode === 'diag') return s.diag.c;
+  if (WS.mapMode === 'rsm') {
+    if (!Number.isFinite(s.rsm)) return '#cfd8dc';
+    const t = Math.max(0, Math.min(1, s.rsm / 100));
+    return 'rgb(' + Math.round(200 - 160 * t) + ',' + Math.round(160 - 40 * t) + ',' + Math.round(90 + 140 * t) + ')';
+  }
+  if (WS.mapMode === 'ndmi') {
+    if (!Number.isFinite(s.ndmi)) return '#cfd8dc';
+    const t = Math.max(0, Math.min(1, (s.ndmi + 0.2) / 0.7));
+    return 'rgb(' + Math.round(200 - 150 * t) + ',' + Math.round(90 + 100 * t) + ',' + Math.round(70 + 60 * t) + ')';
+  }
+  if (!Number.isFinite(s.def)) return '#cfd8dc';
+  const t = Math.max(0, Math.min(1, s.def / 0.5));
+  return 'rgb(' + Math.round(40 + 190 * t) + ',' + Math.round(150 - 110 * t) + ',' + Math.round(70 - 30 * t) + ')';
+};
+WS.drawMap = function () {
+  const cv = document.getElementById('wsMap');
+  if (!cv || !(WP.cells || []).length) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = cv.clientWidth || 600, H = 330;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = '#f6f1e3'; g.fillRect(0, 0, W, H);
+  const b = WS.bbox();
+  const sx = W / Math.max(1e-6, (b.lo1 - b.lo0)), sy = H / Math.max(1e-6, (b.la1 - b.la0));
+  const sc = Math.min(sx, sy) * 0.94;
+  const ox = (W - (b.lo1 - b.lo0) * sc) / 2, oy = (H - (b.la1 - b.la0) * sc) / 2;
+  const px = function (lo) { return ox + (lo - b.lo0) * sc; };
+  const py = function (la) { return H - oy - (la - b.la0) * sc; };
+  WS._proj = { px: px, py: py };
+  g.strokeStyle = 'rgba(30,60,90,.28)'; g.lineWidth = 1;
+  (GZGEO.NET || []).forEach(function (br) {
+    if (!br || !br.p || br.h === 'multi') return;
+    g.beginPath();
+    br.p.forEach(function (p, i) { const X = px(p[0]), Y = py(p[1]); if (i) g.lineTo(X, Y); else g.moveTo(X, Y); });
+    g.stroke();
+  });
+  const km = Math.sqrt((WP.cells[0] || {}).km2 || 1);
+  const size = Math.max(3, km / 111 * sc);
+  WS._hit = [];
+  (WP.cells || []).forEach(function (c) {
+    const X = px(c.lo), Y = py(c.la);
+    g.fillStyle = c.cov === 'urban' ? 'rgba(120,120,120,.25)' : WS.colorOf(c);
+    g.fillRect(X - size / 2, Y - size / 2, size, size);
+    WS._hit.push({ c: c, x: X, y: Y, r: size });
+  });
+  if (WS.picked) {
+    const p = WS._hit.find(function (x) { return x.c.id === WS.picked; });
+    if (p) { g.strokeStyle = '#0e3b5c'; g.lineWidth = 2; g.strokeRect(p.x - size / 2 - 2, p.y - size / 2 - 2, size + 4, size + 4); }
+  }
+  const lg = document.getElementById('wsLgd');
+  if (lg) {
+    const sw = function (col, txt) { return '<div class="wp-lg"><span class="wp-sw" style="background:' + col + '"></span>' + txt + '</div>'; };
+    if (WS.mapMode === 'diag') {
+      lg.innerHTML = Object.keys(WS.DIAG).map(function (k) { return sw(WS.DIAG[k].c, WS.DIAG[k].l); }).join('') + sw('rgba(120,120,120,.35)', 'عمران — مستبعد');
+    } else if (WS.mapMode === 'rsm') {
+      lg.innerHTML = sw('rgb(200,160,90)', 'تربة جافة') + sw('rgb(40,120,230)', 'تربة مروية') + sw('#cfd8dc', 'لا بيانات');
+    } else if (WS.mapMode === 'ndmi') {
+      lg.innerHTML = sw('rgb(200,90,70)', 'محتوى مائى منخفض') + sw('rgb(50,190,130)', 'مرتفع') + sw('#cfd8dc', 'لا بيانات');
+    } else {
+      lg.innerHTML = sw('rgb(40,150,70)', 'بلا عجز') + sw('rgb(135,95,55)', 'عجز متوسط') + sw('rgb(230,40,40)', 'عجز ≥ 50٪') + sw('#cfd8dc', 'لا بيانات');
+    }
+  }
+};
+WS.bindMap = function () {
+  const cv = document.getElementById('wsMap');
+  if (!cv || cv._wsBound) return;
+  cv._wsBound = true;
+  cv.addEventListener('click', function (e) {
+    if (!WS._hit || !WS._hit.length) return;
+    const r = cv.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    let best = null, bd = 1e9;
+    WS._hit.forEach(function (p) {
+      const d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
+      if (d < bd) { bd = d; best = p; }
+    });
+    if (!best || bd > 900) return;
+    WS.picked = best.c.id;
+    WS.renderPick(best.c);
+    WS.drawMap();
+  });
+};
+WS.renderPick = function (c) {
+  const box = document.getElementById('wsPick');
+  if (!box) return;
+  const s = WS.cellStat[c.id];
+  if (!s) {
+    box.className = 'wp-note';
+    box.innerHTML = '<b>' + WS.esc(c.id) + '</b> — ' + WS.esc(WS.distName(c.z)) +
+      (c.cov === 'urban' ? ' · مصنّفة عمراناً فهى مستبعدة من التحليل الزراعى.' : ' · لا قيم محسوبة بعد.');
+    return;
+  }
+  const D = s.diag;
+  box.className = 'wp-note ' + (D.code === 'ok' ? 'g' : D.code === 'root' || D.code === 'supply' ? 'r' : 'w');
+  box.innerHTML = '<b>' + WS.esc(c.id) + ' · ' + WS.esc(WS.distName(c.z)) + '</b> — ' +
+    '<span style="color:' + D.c + ';font-weight:700">' + D.l + '</span><br>' +
+    'ETa ' + WS.num(s.aeti, 1) + ' مم · ETa/ETo ' + WS.num(s.etf, 2) +
+    ' · عجز ' + (Number.isFinite(s.def) ? WS.pct(s.def * 100) : '—') +
+    ' · رطوبة التربة ' + WS.pct(s.rsm) +
+    ' · NDMI ' + WS.num(s.ndmi, 3) + (Number.isFinite(s.veg) ? ' (مزروع ' + WS.pct(s.veg) + ')' : '') +
+    '<br>' + WS.esc(D.why) + '<br><b>الإجراء:</b> ' + WS.esc(WS.DIAG[D.code].a) +
+    '<br><a href="https://earth.google.com/web/@' + c.la + ',' + c.lo + ',300a,3000d,35y,0h,0t,0r" target="_blank" rel="noopener">🌍 فتح الموقع على جوجل إيرث</a>';
+};
+WS.drawChart = function () {
+  const cv = document.getElementById('wsChart');
+  if (!cv || typeof Chart === 'undefined' || !WS.ready) return;
+  try { if (WS.charts.main) WS.charts.main.destroy(); } catch (e) { /* تجاهل */ }
+  const crop = WS.cropCells();
+  const labels = (WP.periods || []).map(function (p) { return p.label; });
+  const aeti = [], ret = [], reti = [];
+  (WP.periods || []).forEach(function (p, i) {
+    aeti.push(WS.meanOf(crop.map(function (c) { const x = (WP.series[c.id] || [])[i]; return x ? x.aeti : NaN; })));
+    ret.push(WS.meanOf(crop.map(function (c) { const x = (WS.series[c.id] || [])[i]; return x ? x.ret : NaN; })));
+    const vals = crop.map(function (c) { return WS.etf(c.id, i); }).filter(Number.isFinite);
+    const r = vals.length ? WS.pctl(vals, WS.config.refPct) : NaN;
+    const m = WS.meanOf(vals);
+    reti.push(Number.isFinite(r) && r > 0 && Number.isFinite(m) ? Math.min(100, m / r * 100) : NaN);
+  });
+  WS.charts.main = new Chart(cv.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        { label: 'ETa فعلى مم', data: aeti, borderColor: '#167b86', backgroundColor: 'rgba(22,123,134,.12)', tension: .3, yAxisID: 'y' },
+        { label: 'ETo مرجعى مم', data: ret, borderColor: '#a86a2a', borderDash: [5, 4], tension: .3, yAxisID: 'y' },
+        { label: 'الكفاية ٪', data: reti, borderColor: '#5a6b3a', tension: .3, yAxisID: 'y1' }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { font: { family: 'Cairo' } } } },
+      scales: {
+        y: { title: { display: true, text: 'مم' } },
+        y1: { position: 'left', min: 0, max: 100, grid: { drawOnChartArea: false }, title: { display: true, text: '٪' } },
+        x: { ticks: { font: { size: 9 } } }
+      }
+    }
+  });
+};
+WS.exportCsv = function () {
+  if (!WS.diagRows.length) { WS.log('لا نتائج للتصدير.', 'w'); return; }
+  const head = ['cell', 'district', 'lat', 'lon', 'cover', 'ETa_mm', 'ETa_ETo', 'adequacy', 'deficit_pct', 'RSM_pct', 'NDMI', 'vegetated_pct', 'diagnosis', 'reason', 'action'];
+  const lines = [head.join(',')];
+  WS.diagRows.forEach(function (r) {
+    const s = r.s, c = r.c;
+    const cell = [c.id, WS.distName(c.z), c.la, c.lo, c.cov,
+      WS.num(s.aeti, 1), WS.num(s.etf, 3), WS.num(s.reti * 100, 0),
+      Number.isFinite(s.def) ? (s.def * 100).toFixed(0) : '',
+      WS.num(s.rsm, 0), WS.num(s.ndmi, 3), WS.num(s.veg, 0),
+      s.diag.l, s.diag.why, WS.DIAG[s.diag.code].a];
+    lines.push(cell.map(function (v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; }).join(','));
+  });
+  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'giza-water-stress-' + (WP.years && WP.years.length ? WP.years[0] : '') + '.csv';
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 1500);
+  WS.log('صُدّرت ' + WS.diagRows.length + ' خلية إلى CSV.', 's');
+};
+WS.after = function () {
+  WS.fillPeriods();
+  WS.bindMap();
+  ['wsTh', 'wsRL', 'wsRH', 'wsRef', 'wsRsmMode', 'wsPeriod'].forEach(function (id) {
+    const e = document.getElementById(id);
+    if (!e) return;
+    e.addEventListener('change', function () { WS.syncControls(); WS.saveConfig(); WS.compute(); });
+  });
+  document.querySelectorAll('[data-wsmap]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      WS.mapMode = b.getAttribute('data-wsmap');
+      document.querySelectorAll('[data-wsmap]').forEach(function (o) { o.classList.toggle('on', o === b); });
+      WS.drawMap();
+    });
+  });
+  document.querySelectorAll('[data-wsflt]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      WS.filter = b.getAttribute('data-wsflt');
+      document.querySelectorAll('[data-wsflt]').forEach(function (o) { o.classList.toggle('on', o === b); });
+      WS.renderCells();
+    });
+  });
+  if (!WS.baseReady()) {
+    WS.setStatus('ابدأ من تبويب WaPOR: ابنِ الشبكة واجلب AETI', '');
+    WS.log('التبويب يعمل فوق بيانات تبويب WaPOR — ابنِ شبكة الخلايا واجلب AETI وPCP أولاً.', 'w');
+  } else if (!WS.ready) {
+    WS.setStatus('جاهز — اجلب RET ورطوبة التربة', '');
+  }
+  WS.render();
+};
+WS.mount = function () {
+  const root = document.getElementById('wsRoot');
+  if (!root) return;
+  WS.loadConfig();
+  root.innerHTML = WS.viewHtml();
+  WS.after();
+};
+window.WS = WS;
+
+/* ── ربط التبويب الثامن بمُبدّل التبويبات ── */
+(function(){
+  var prev = switchTab;
+  switchTab = function(i){
+    prev(i);
+    if (i === 8 && window.WS) {
+      requestAnimationFrame(function(){ WS.mount(); });
+    }
+  };
+})();
 </script>
 </body>
 </html>
