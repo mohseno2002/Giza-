@@ -855,6 +855,7 @@ footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-to
   <div class="tab" onclick="switchTab(6)">🌿 رصد الحشائش</div>
   <div class="tab" onclick="switchTab(7)">🛰️ WaPOR الاستهلاك الفعلى</div>
   <div class="tab" onclick="switchTab(8)">💧 الإجهاد المائى والتشخيص</div>
+  <div class="tab" onclick="switchTab(9)">🔮 الإنذار المبكر والتنبؤ</div>
 </div>
 
 <div class="picker">
@@ -978,6 +979,7 @@ footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-to
 <div class="section" id="sec6"><div id="wwRoot"></div></div>
 <div class="section" id="sec7"><div id="wpRoot"></div></div>
 <div class="section" id="sec8"><div id="wsRoot"></div></div>
+<div class="section" id="sec9"><div id="fcRoot"></div></div>
 
 <!-- SMART PANEL -->
 <div class="smart-panel" id="smartPanel">
@@ -17406,6 +17408,652 @@ window.WS = WS;
     if (i === 8 && window.WS) {
       requestAnimationFrame(function(){ WS.mount(); });
     }
+  };
+})();
+</script>
+<script>
+"use strict";
+/* ════════════════════════════════════════════════════════════════════
+   الإنذار المبكر والتنبؤ بالاحتياج المائى — FC
+   يحوّل المنظومة من رصد لما حدث إلى تقدير لما سيحدث خلال 16 يوماً.
+   المنهج (FAO-56):  ETc = Kc × ETo
+     • ETo: تنبؤ Open-Meteo لكل هندسة على حدة (مجانى بلا مفتاح، بنفس معادلة
+       بنمان-مونتيث المرجعية) — لا يعتمد على أى قمر صناعى فلا تأخير.
+     • Kc: يُعايَر من بيانات الإدارة نفسها لا من جدول كتاب —
+       وسيط ETa/ETo التاريخى من WaPOR لكل هندسة ولكل شهر (Kc التشغيلى)،
+       ومئين 90 لأفضل النظائر (Kc عند الرى الكافى).
+     • الاحتياج الإجمالى = (ETc − المطر الفعّال) × المساحة ÷ كفاءة النقل.
+   ثم يُقارَن بالمنصرف الفعلى من المغذيات فتظهر أيام العجز قبل وقوعها.
+   تنبؤ بالطلب لا بالإطلاق — حصة المنبع قرار خارج هذه الإدارة.
+   ════════════════════════════════════════════════════════════════════ */
+const FC = {
+  API: 'https://api.open-meteo.com/v1/forecast',
+  SAVE_KEY: 'giza.forecast.v1',
+  DAILY: 'et0_fao_evapotranspiration,precipitation_sum,temperature_2m_max,temperature_2m_min,windspeed_10m_max',
+  KC_DEFAULT: { 1: .70, 2: .75, 3: .85, 4: .95, 5: 1.00, 6: 1.05, 7: 1.05, 8: 1.00, 9: .95, 10: .85, 11: .78, 12: .70 },
+  config: { days: 16, supplyMode: 'recent', supplyMcm: 0, recentDays: 14, heatPct: 15, kcMode: 'act' },
+  loc: [], dates: [], kc: {}, rows: [], dayTotals: [], alerts: [], area: {},
+  supply: { mcm: null, src: '—', days: 0 },
+  fetchedAt: null, running: false, abort: null, logs: [], charts: {}, kcSrc: {},
+  fmt: function (n) { return (+n || 0).toLocaleString('ar-EG'); }
+};
+FC.num = function (v, d) { return Number.isFinite(v) ? v.toFixed(d == null ? 2 : d) : '—'; };
+FC.esc = function (s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+};
+FC.log = function (m, k) {
+  FC.logs.unshift({ t: new Date().toLocaleTimeString('ar-EG'), m: m, k: k || '' });
+  if (FC.logs.length > 120) FC.logs.pop();
+  const el = document.getElementById('fcLog');
+  if (el) el.innerHTML = FC.logs.map(function (x) {
+    return '<div class="' + x.k + '">' + FC.esc(x.t) + ' — ' + FC.esc(x.m) + '</div>';
+  }).join('');
+};
+FC.setStatus = function (t, s) {
+  const el = document.getElementById('fcState');
+  if (!el) return;
+  el.textContent = t;
+  el.className = 'wp-bdg ' + (s === 'ok' ? 'ok' : s === 'bad' ? 'b' : s === 'busy' ? 'w' : '');
+};
+FC.hint = function (e) {
+  const m = String(e && e.message || e || '');
+  if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return ' — سبب مُرجّح: انقطاع الشبكة أو حجب CORS';
+  if (/HTTP 4\d\d/.test(m)) return ' — سبب مُرجّح: صيغة الطلب أو تجاوز حد الاستخدام';
+  if (/HTTP 5\d\d/.test(m)) return ' — سبب مُرجّح: عطل مؤقت بالخادم';
+  return '';
+};
+FC.dbRef = function () {
+  if (typeof DB !== 'undefined' && DB) return DB;
+  return window.DB || window.__DB || null;
+};
+FC.dists = function () { return (typeof GZGEO !== 'undefined' && GZGEO.DIST) ? GZGEO.DIST : (window.GZGEO || {}).DIST || []; };
+FC.distName = function (id) {
+  const d = FC.dists().find(function (x) { return x.id === id; });
+  return d ? d.n : id;
+};
+FC.median = function (a) {
+  const v = a.filter(Number.isFinite).sort(function (x, y) { return x - y; });
+  if (!v.length) return NaN;
+  const m = Math.floor(v.length / 2);
+  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+};
+FC.pctl = function (a, p) {
+  const v = a.filter(Number.isFinite).sort(function (x, y) { return x - y; });
+  if (!v.length) return NaN;
+  const i = (v.length - 1) * p / 100, lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? v[lo] : v[lo] + (v[hi] - v[lo]) * (i - lo);
+};
+
+/* ───────── المساحات ومراكز الهندسات من شبكة WaPOR نفسها ───────── */
+FC.ready = function () { return !!(window.WP && WP.cells && WP.cells.length); };
+FC.buildGeo = function () {
+  FC.area = {}; FC.loc = [];
+  if (!FC.ready()) return;
+  const crop = WP.cells.filter(function (c) { return c.cov !== 'urban'; });
+  FC.dists().forEach(function (d) {
+    const cs = crop.filter(function (c) { return c.z === d.id; });
+    if (!cs.length) return;
+    let km2 = 0, la = 0, lo = 0;
+    cs.forEach(function (c) { km2 += (c.km2e || c.km2); la += c.la; lo += c.lo; });
+    FC.area[d.id] = { km2: km2, m2: km2 * 1e6, fd: Math.round(km2 * 1e6 / (GZGEO.FEDDAN || 4200.83)), cells: cs.length };
+    FC.loc.push({ id: d.id, n: d.n, c: d.c, la: +(la / cs.length).toFixed(4), lo: +(lo / cs.length).toFixed(4) });
+  });
+};
+
+/* ───────── معايرة Kc من بيانات الإدارة ───────── */
+FC.buildKc = function () {
+  FC.kc = {}; FC.kcSrc = {};
+  const haveWs = !!(window.WS && WS.series && Object.keys(WS.series).length && WP.periods && WP.periods.length);
+  const crop = FC.ready() ? WP.cells.filter(function (c) { return c.cov !== 'urban'; }) : [];
+  FC.loc.forEach(function (L) {
+    FC.kc[L.id] = {}; FC.kcSrc[L.id] = {};
+    const cs = crop.filter(function (c) { return c.z === L.id; });
+    const byMonth = {};
+    if (haveWs) {
+      WP.periods.forEach(function (p, i) {
+        const vals = [];
+        cs.forEach(function (c) {
+          const a = (WP.series[c.id] || [])[i], b = (WS.series[c.id] || [])[i];
+          if (a && b && Number.isFinite(a.aeti) && Number.isFinite(b.ret) && b.ret > 0) vals.push(a.aeti / b.ret);
+        });
+        if (vals.length >= 5) {
+          if (!byMonth[p.month]) byMonth[p.month] = [];
+          byMonth[p.month] = byMonth[p.month].concat(vals);
+        }
+      });
+    }
+    const months = Object.keys(byMonth).map(Number);
+    for (let m = 1; m <= 12; m++) {
+      if (byMonth[m]) {
+        FC.kc[L.id][m] = { act: FC.median(byMonth[m]), pot: FC.pctl(byMonth[m], 90), n: byMonth[m].length };
+        FC.kcSrc[L.id][m] = 'معايَر';
+      } else if (months.length) {
+        /* أقرب شهر متاح — يُعلَن صراحة */
+        let best = months[0], bd = 99;
+        months.forEach(function (x) {
+          const d = Math.min(Math.abs(x - m), 12 - Math.abs(x - m));
+          if (d < bd) { bd = d; best = x; }
+        });
+        FC.kc[L.id][m] = { act: FC.median(byMonth[best]), pot: FC.pctl(byMonth[best], 90), n: byMonth[best].length };
+        FC.kcSrc[L.id][m] = 'من شهر ' + best;
+      } else {
+        FC.kc[L.id][m] = { act: FC.KC_DEFAULT[m], pot: FC.KC_DEFAULT[m] * 1.12, n: 0 };
+        FC.kcSrc[L.id][m] = 'عام غير معايَر';
+      }
+    }
+  });
+};
+FC.kcCoverage = function () {
+  let cal = 0, tot = 0;
+  Object.keys(FC.kcSrc).forEach(function (z) {
+    Object.keys(FC.kcSrc[z]).forEach(function (m) { tot++; if (FC.kcSrc[z][m] === 'معايَر') cal++; });
+  });
+  return tot ? cal / tot * 100 : 0;
+};
+
+/* ───────── جلب التنبؤ ───────── */
+FC.fetchForecast = async function () {
+  if (FC.running) return;
+  FC.syncControls();
+  FC.buildGeo();
+  if (!FC.loc.length) {
+    FC.log('لا توجد شبكة خلايا. افتح تبويب WaPOR واضغط «توليد شبكة التحليل» أولاً.', 'e');
+    FC.setStatus('شبكة التحليل غير مبنية', 'bad');
+    return;
+  }
+  const btn = document.getElementById('fcFetch');
+  FC.running = true; FC.abort = new AbortController();
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="wp-spin"></span> جارٍ الجلب...'; }
+  FC.setStatus('طلب التنبؤ الجوى', 'busy');
+  try {
+    const u = new URL(FC.API);
+    u.searchParams.set('latitude', FC.loc.map(function (L) { return L.la; }).join(','));
+    u.searchParams.set('longitude', FC.loc.map(function (L) { return L.lo; }).join(','));
+    u.searchParams.set('daily', FC.DAILY);
+    u.searchParams.set('forecast_days', String(FC.config.days));
+    u.searchParams.set('timezone', 'Africa/Cairo');
+    const r = await fetch(u.href, { signal: FC.abort.signal });
+    const txt = await r.text();
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' · ' + txt.slice(0, 140));
+    let j = JSON.parse(txt);
+    if (!Array.isArray(j)) j = [j];
+    if (j.length !== FC.loc.length) throw new Error('عدد المواقع المُرجَعة ' + j.length + ' لا يطابق ' + FC.loc.length + ' هندسة');
+    const d0 = j[0].daily;
+    if (!d0 || !d0.time || !d0.time.length) throw new Error('لم يُرجع الخادم سلسلة يومية');
+    if (!d0.et0_fao_evapotranspiration) throw new Error('متغير ETo غير متاح فى الاستجابة');
+    FC.dates = d0.time.slice();
+    j.forEach(function (o, i) {
+      const dd = o.daily || {};
+      FC.loc[i].eto = (dd.et0_fao_evapotranspiration || []).map(Number);
+      FC.loc[i].pcp = (dd.precipitation_sum || []).map(Number);
+      FC.loc[i].tmax = (dd.temperature_2m_max || []).map(Number);
+      FC.loc[i].tmin = (dd.temperature_2m_min || []).map(Number);
+      FC.loc[i].wind = (dd.windspeed_10m_max || []).map(Number);
+      FC.loc[i].apiLa = o.latitude; FC.loc[i].apiLo = o.longitude;
+    });
+    FC.fetchedAt = new Date().toISOString();
+    const lo = Math.min.apply(null, FC.loc.map(function (L) { return L.eto[0]; }));
+    const hi = Math.max.apply(null, FC.loc.map(function (L) { return L.eto[0]; }));
+    FC.log('تم جلب ' + FC.dates.length + ' يوماً لـ ' + FC.loc.length + ' هندسة · ETo اليوم بين ' +
+      FC.num(lo, 2) + ' و' + FC.num(hi, 2) + ' مم.', 's');
+    FC.setStatus('التنبؤ محدَّث · ' + FC.dates.length + ' يوماً', 'ok');
+    FC.save();
+    FC.compute();
+  } catch (e) {
+    if (e.name === 'AbortError') { FC.log('أُلغى الطلب.', 'w'); FC.setStatus('أُلغيت العملية', ''); }
+    else { FC.log('تعذّر جلب التنبؤ: ' + e.message + FC.hint(e), 'e'); FC.setStatus('فشل الجلب: ' + e.message, 'bad'); }
+  } finally {
+    FC.running = false; FC.abort = null;
+    if (btn) { btn.disabled = false; btn.textContent = 'جلب التنبؤ وحساب الاحتياج'; }
+  }
+};
+FC.cancel = function () { if (FC.abort) FC.abort.abort(); };
+FC.save = function () {
+  try {
+    localStorage.setItem(FC.SAVE_KEY, JSON.stringify({
+      config: FC.config, dates: FC.dates, fetchedAt: FC.fetchedAt,
+      loc: FC.loc.map(function (L) {
+        return { id: L.id, la: L.la, lo: L.lo, eto: L.eto, pcp: L.pcp, tmax: L.tmax, tmin: L.tmin, wind: L.wind };
+      })
+    }));
+  } catch (e) { /* حصة التخزين */ }
+};
+FC.load = function () {
+  try {
+    const x = JSON.parse(localStorage.getItem(FC.SAVE_KEY) || '{}');
+    if (x && x.config) FC.config = Object.assign(FC.config, x.config);
+    if (x && Array.isArray(x.dates) && x.dates.length && Array.isArray(x.loc)) {
+      FC.dates = x.dates; FC.fetchedAt = x.fetchedAt || null;
+      FC.buildGeo();
+      x.loc.forEach(function (s) {
+        const L = FC.loc.find(function (y) { return y.id === s.id; });
+        if (L) { L.eto = s.eto; L.pcp = s.pcp; L.tmax = s.tmax; L.tmin = s.tmin; L.wind = s.wind; }
+      });
+      return true;
+    }
+  } catch (e) { /* تجاهل */ }
+  return false;
+};
+FC.ageHours = function () {
+  if (!FC.fetchedAt) return null;
+  return (Date.now() - new Date(FC.fetchedAt).getTime()) / 36e5;
+};
+
+/* ───────── المنصرف المرجعى من المغذيات ───────── */
+FC.recentSupply = function () {
+  const db = FC.dbRef();
+  if (!db || !db.series) return { mcm: null, src: 'لا قراءات مغذيات متاحة', days: 0 };
+  const all = [];
+  Object.keys(db.series).forEach(function (y) {
+    const f = db.series[y] && db.series[y].flows && db.series[y].flows.__total__;
+    if (Array.isArray(f)) f.forEach(function (r) { if (r && r.date && r.val != null) all.push(r); });
+  });
+  if (!all.length) return { mcm: null, src: 'لا قراءات مغذيات متاحة', days: 0 };
+  all.sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+  const take = all.slice(0, Math.max(3, FC.config.recentDays));
+  const mean = take.reduce(function (s, r) { return s + (+r.val || 0); }, 0) / take.length;
+  return { mcm: mean, src: 'متوسط آخر ' + take.length + ' قراءة (' + take[take.length - 1].date + ' → ' + take[0].date + ')', days: take.length };
+};
+FC.supplyBaseline = function () {
+  if (FC.config.supplyMode === 'manual' && Number.isFinite(+FC.config.supplyMcm) && +FC.config.supplyMcm > 0)
+    return { mcm: +FC.config.supplyMcm, src: 'قيمة مُدخَلة يدوياً', days: 0 };
+  return FC.recentSupply();
+};
+
+/* ───────── الحساب ───────── */
+FC.peFactor = function () {
+  const e = document.getElementById('wpPE');
+  return (e ? +e.value : ((window.WP && WP.eff && WP.eff.pe) || 70)) / 100;
+};
+FC.effOf = function (z) {
+  if (window.WP && typeof WP.effOf === 'function') { const v = WP.effOf(z); if (Number.isFinite(v) && v > 0) return v; }
+  return .5;
+};
+FC.compute = function () {
+  if (!FC.dates.length || !FC.loc.length) { FC.render(); return; }
+  FC.syncControls();
+  FC.buildKc();
+  const pe = FC.peFactor();
+  FC.supply = FC.supplyBaseline();
+  FC.rows = []; FC.dayTotals = [];
+  const n = Math.min(FC.dates.length, FC.config.days);
+  for (let t = 0; t < n; t++) {
+    const date = FC.dates[t], month = +date.slice(5, 7);
+    let totAct = 0, totPot = 0, etoSum = 0, etoN = 0, rain = 0, tmax = -99;
+    const per = [];
+    FC.loc.forEach(function (L) {
+      const A = FC.area[L.id];
+      if (!A) return;
+      const eto = L.eto && Number.isFinite(L.eto[t]) ? L.eto[t] : NaN;
+      const p = L.pcp && Number.isFinite(L.pcp[t]) ? L.pcp[t] : 0;
+      const k = FC.kc[L.id] && FC.kc[L.id][month] ? FC.kc[L.id][month] : { act: FC.KC_DEFAULT[month], pot: FC.KC_DEFAULT[month] };
+      const etcAct = Number.isFinite(eto) ? k.act * eto : NaN;
+      const etcPot = Number.isFinite(eto) ? k.pot * eto : NaN;
+      const netAct = Number.isFinite(etcAct) ? Math.max(0, etcAct - p * pe) : NaN;
+      const netPot = Number.isFinite(etcPot) ? Math.max(0, etcPot - p * pe) : NaN;
+      const eff = FC.effOf(L.id);
+      const volAct = Number.isFinite(netAct) ? netAct / 1000 * A.m2 / eff : NaN;
+      const volPot = Number.isFinite(netPot) ? netPot / 1000 * A.m2 / eff : NaN;
+      if (Number.isFinite(volAct)) totAct += volAct;
+      if (Number.isFinite(volPot)) totPot += volPot;
+      if (Number.isFinite(eto)) { etoSum += eto; etoN++; }
+      rain = Math.max(rain, p);
+      if (Number.isFinite(L.tmax && L.tmax[t])) tmax = Math.max(tmax, L.tmax[t]);
+      per.push({
+        id: L.id, eto: eto, pcp: p, kc: k.act, kcPot: k.pot, etc: etcAct,
+        net: netAct, volAct: volAct, volPot: volPot,
+        mcm: volAct / 1e6, q: volAct / 86400, fd: A.fd,
+        perFd: A.fd ? volAct / A.fd : NaN
+      });
+      FC.rows.push({ t: t, date: date, id: L.id, eto: eto, pcp: p, kc: k.act, net: netAct, mcm: volAct / 1e6, q: volAct / 86400 });
+    });
+    FC.dayTotals.push({
+      t: t, date: date, eto: etoN ? etoSum / etoN : NaN, rain: rain, tmax: tmax > -99 ? tmax : NaN,
+      mcmAct: totAct / 1e6, mcmPot: totPot / 1e6, qAct: totAct / 86400, per: per
+    });
+  }
+  FC.buildAlerts();
+  FC.render();
+};
+FC.buildAlerts = function () {
+  FC.alerts = [];
+  const D = FC.dayTotals;
+  if (!D.length) return;
+  const sup = FC.supply.mcm;
+  const etoMed = FC.median(D.map(function (d) { return d.eto; }));
+  const heatTh = etoMed * (1 + FC.config.heatPct / 100);
+  const fmtD = function (s) { return s.slice(8, 10) + '/' + s.slice(5, 7); };
+  /* 1) أيام العجز */
+  if (Number.isFinite(sup) && sup > 0) {
+    const def = D.filter(function (d) { return d.mcmAct > sup; });
+    if (def.length) {
+      const worst = def.reduce(function (a, b) { return b.mcmAct > a.mcmAct ? b : a; });
+      FC.alerts.push({
+        lvl: 'r', ttl: 'عجز متوقع فى ' + def.length + ' يوم من ' + D.length,
+        txt: 'أشد يوم ' + fmtD(worst.date) + ': الاحتياج ' + FC.num(worst.mcmAct, 2) +
+          ' مقابل منصرف مرجعى ' + FC.num(sup, 2) + ' مليون م³/يوم — عجز ' +
+          FC.num((worst.mcmAct - sup) / sup * 100, 0) + '٪.',
+        act: 'ابدأ الآن مراجعة المناوبة وتوزيع الفتحات على الهندسات، وارفع طلب زيادة الحصة قبل التاريخ لا بعده.'
+      });
+    } else {
+      FC.alerts.push({
+        lvl: 'g', ttl: 'المنصرف الحالى يغطى الاحتياج المتوقع',
+        txt: 'أعلى احتياج متوقع ' + FC.num(Math.max.apply(null, D.map(function (d) { return d.mcmAct; })), 2) +
+          ' مقابل ' + FC.num(sup, 2) + ' مليون م³/يوم.',
+        act: 'حافظ على المعدل الحالى وراقب أيام موجات الحر أدناه.'
+      });
+    }
+  } else {
+    FC.alerts.push({
+      lvl: 'w', ttl: 'المنصرف المرجعى غير معلوم',
+      txt: 'لا توجد قراءات مغذيات صالحة، فلا يمكن الحكم بعجز أو كفاية.',
+      act: 'أدخل المنصرف اليومى يدوياً بالأعلى، أو حدّث أورنيك التصرفات.'
+    });
+  }
+  /* 2) موجات الحر */
+  const heat = D.filter(function (d) { return Number.isFinite(d.eto) && (d.eto >= heatTh || (Number.isFinite(d.tmax) && d.tmax >= 40)); });
+  if (heat.length) {
+    const pk = heat.reduce(function (a, b) { return b.eto > a.eto ? b : a; });
+    FC.alerts.push({
+      lvl: 'a', ttl: 'موجة بخر مرتفع فى ' + heat.length + ' يوم',
+      txt: 'الذروة ' + fmtD(pk.date) + ': ETo ' + FC.num(pk.eto, 2) + ' مم مقابل وسيط ' +
+        FC.num(etoMed, 2) + ' مم (+' + FC.num((pk.eto / etoMed - 1) * 100, 0) + '٪)' +
+        (Number.isFinite(pk.tmax) ? ' · العظمى ' + FC.num(pk.tmax, 0) + '°' : '') + '.',
+      act: 'قصّر فترة الدورة أو زد نوبة الرى فى هذه الأيام تحديداً — الاحتياج يرتفع بنفس النسبة تقريباً.'
+    });
+  }
+  /* 3) مطر مؤثر */
+  const rainy = D.filter(function (d) { return Number.isFinite(d.rain) && d.rain >= 5; });
+  if (rainy.length) {
+    FC.alerts.push({
+      lvl: 'b', ttl: 'مطر متوقع فى ' + rainy.length + ' يوم',
+      txt: 'أعلى قيمة ' + FC.num(Math.max.apply(null, rainy.map(function (d) { return d.rain; })), 1) + ' مم يوم ' + fmtD(rainy[0].date) + '.',
+      act: 'خفّض الرى فى هذه الأيام — المطر الفعّال مخصوم بالفعل من الاحتياج المعروض.'
+    });
+  }
+  /* 4) الهندسة الأعلى احتياجاً */
+  const byDist = {};
+  FC.rows.forEach(function (r) { byDist[r.id] = (byDist[r.id] || 0) + (Number.isFinite(r.mcm) ? r.mcm : 0); });
+  const ids = Object.keys(byDist).sort(function (a, b) { return byDist[b] - byDist[a]; });
+  if (ids.length) {
+    const tot = ids.reduce(function (s, k) { return s + byDist[k]; }, 0);
+    FC.alerts.push({
+      lvl: 'b', ttl: 'أعلى الهندسات احتياجاً: ' + FC.distName(ids[0]),
+      txt: FC.num(byDist[ids[0]], 1) + ' مليون م³ خلال ' + D.length + ' يوم — ' +
+        FC.num(byDist[ids[0]] / tot * 100, 0) + '٪ من إجمالى الاحتياج.',
+      act: 'ابدأ بها عند توزيع أى زيادة، وراجع كفاءة النقل بها إن كان النصيب الفدانى شاذاً.'
+    });
+  }
+  /* 5) فجوة الأداء */
+  const sAct = D.reduce(function (s, d) { return s + d.mcmAct; }, 0);
+  const sPot = D.reduce(function (s, d) { return s + d.mcmPot; }, 0);
+  if (sAct > 0 && sPot > sAct * 1.02) {
+    FC.alerts.push({
+      lvl: 'w', ttl: 'فجوة بين الاستهلاك الحالى والرى الكافى',
+      txt: 'الاحتياج بمعامل الأداء الحالى ' + FC.num(sAct, 1) + ' مليون م³، وعند مستوى أفضل النظائر ' +
+        FC.num(sPot, 1) + ' مليون م³ — فارق ' + FC.num((sPot / sAct - 1) * 100, 0) + '٪.',
+      act: 'الفارق هو حجم الإجهاد المائى القائم فعلاً: إمّا يُغطَّى بزيادة الحصة أو يُقبَل كعجز معلوم ومُدار.'
+    });
+  }
+};
+
+/* ───────── الواجهة ───────── */
+FC.fld = function (l, inner) { return '<div class="wp-fld"><label>' + l + '</label>' + inner + '</div>'; };
+FC.viewHtml = function () {
+  let h = '<section class="wapor-shell">';
+  h += '<div class="panel"><div class="panel-head">' +
+    '<div class="panel-title">🔮 الإنذار المبكر والتنبؤ بالاحتياج المائى</div>' +
+    '<span id="fcState" class="wp-bdg">لم يُجلب التنبؤ</span></div><div class="panel-body">' +
+    '<div class="wp-note"><b>المنهج:</b> ETc = Kc × ETo بمعادلة FAO-56. ' +
+    'الـ ETo تنبؤ جوى يومى لكل هندسة على مركزها (Open-Meteo، مجانى وبلا مفتاح، ولا يعتمد على أى قمر صناعى فلا تأخير). ' +
+    'والـ Kc <b>معايَر من بيانات الإدارة نفسها</b> — وسيط ETa/ETo التاريخى من WaPOR لكل هندسة ولكل شهر، ' +
+    'لا من جدول عام. ثم يُخصم المطر الفعّال وتُقسَّم النتيجة على كفاءة النقل ' +
+    'فيظهر الاحتياج بالمليون متر مكعب يومياً، مقارناً بمنصرف المغذيات.</div>';
+  h += '<div class="wp-grid wp-g3">' +
+    FC.fld('أفق التنبؤ', '<select id="fcDays">' +
+      [7, 10, 14, 16].map(function (v) { return '<option value="' + v + '"' + (FC.config.days === v ? ' selected' : '') + '>' + v + ' يوم</option>'; }).join('') + '</select>') +
+    FC.fld('المنصرف المرجعى', '<select id="fcSupMode">' +
+      '<option value="recent"' + (FC.config.supplyMode === 'recent' ? ' selected' : '') + '>من أورنيك المغذيات</option>' +
+      '<option value="manual"' + (FC.config.supplyMode === 'manual' ? ' selected' : '') + '>إدخال يدوى</option></select>') +
+    FC.fld('قيمة يدوية مليون م³/يوم', '<input id="fcSupVal" type="number" min="0" step="0.1" value="' + (FC.config.supplyMcm || '') + '">') +
+    FC.fld('عدد القراءات للمتوسط', '<input id="fcRecent" type="number" min="3" max="60" step="1" value="' + FC.config.recentDays + '">') +
+    FC.fld('عتبة موجة الحر ٪ فوق الوسيط', '<input id="fcHeat" type="number" min="5" max="60" step="5" value="' + FC.config.heatPct + '">') +
+    FC.fld('أساس الاحتياج', '<select id="fcKcMode">' +
+      '<option value="act"' + (FC.config.kcMode === 'act' ? ' selected' : '') + '>معامل الأداء الحالى</option>' +
+      '<option value="pot"' + (FC.config.kcMode === 'pot' ? ' selected' : '') + '>عند الرى الكافى</option></select>') +
+    '</div>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+    '<button class="dr-btn primary" id="fcFetch" onclick="FC.fetchForecast()">جلب التنبؤ وحساب الاحتياج</button>' +
+    '<button class="dr-btn outline" onclick="FC.cancel()">إلغاء</button>' +
+    '<button class="dr-btn outline" onclick="FC.compute()">إعادة الحساب</button>' +
+    '<button class="dr-btn outline" onclick="FC.exportCsv()">تصدير CSV</button></div>' +
+    '<div class="wp-hint" id="fcMeta"></div></div></div>';
+  h += '<div id="fcAlerts"></div>';
+  h += '<div class="wp-grid wp-g4" id="fcKpis"></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">📈 منحنى الاحتياج مقابل المنصرف</div>' +
+    '<span class="wp-hint">الأعمدة = ETo المتوقع · الخط = الاحتياج · المتقطع = المنصرف المرجعى</span></div>' +
+    '<div class="panel-body"><canvas id="fcChart" height="170"></canvas></div></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">📅 الجدول اليومى</div></div>' +
+    '<div class="panel-body"><div class="table-scroll" style="max-height:400px"><table class="data-table">' +
+    '<thead><tr><th>اليوم</th><th>التاريخ</th><th>ETo مم</th><th>عظمى °م</th><th>مطر مم</th>' +
+    '<th>الاحتياج مليون م³</th><th>م³/ث</th><th>المنصرف</th><th>الرصيد</th><th>الحالة</th></tr></thead>' +
+    '<tbody id="fcDayTbl"><tr><td colspan="10"><div class="wp-empty"><b>لم يُجلب التنبؤ بعد</b>اضغط «جلب التنبؤ» — لن تُعرض أرقام افتراضية.</div></td></tr></tbody>' +
+    '</table></div></div></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">🏛️ التوزيع على الهندسات</div>' +
+    '<span class="wp-hint" id="fcKcNote"></span></div>' +
+    '<div class="panel-body"><div class="table-scroll" style="max-height:340px"><table class="data-table">' +
+    '<thead><tr><th>الهندسة</th><th>الزمام فدان</th><th>Kc الشهر</th><th>مصدر Kc</th><th>ETo متوسط</th>' +
+    '<th>أعلى احتياج يومى</th><th>إجمالى الأفق</th><th>م³/فدان/يوم</th><th>النصيب٪</th></tr></thead>' +
+    '<tbody id="fcDistTbl"><tr><td colspan="9"><div class="wp-empty">—</div></td></tr></tbody></table></div>' +
+    '<div class="wp-note w" style="margin-top:12px"><b>حدود المعرفة:</b> هذا تنبؤ بالطلب المائى لا بالإطلاق — ' +
+    'حصة المنبع قرار خارج نطاق الإدارة. والمنصرف المرجعى مقيس على مستوى المغذيات للمنظومة ككل ' +
+    'لا لكل هندسة، فالتوزيع المعروض نظرى بحسب المساحة والاحتياج لا بحسب قياس فعلى. ' +
+    'ودقة التنبؤ الجوى تتناقص بعد اليوم العاشر.</div></div></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">🧾 سجل التشغيل</div></div>' +
+    '<div class="panel-body"><div class="wp-log" id="fcLog"></div></div></div>';
+  h += '</section>';
+  return h;
+};
+FC.syncControls = function () {
+  const g = function (id) { return document.getElementById(id); };
+  if (g('fcDays')) FC.config.days = +g('fcDays').value || 16;
+  if (g('fcSupMode')) FC.config.supplyMode = g('fcSupMode').value;
+  if (g('fcSupVal')) FC.config.supplyMcm = +g('fcSupVal').value || 0;
+  if (g('fcRecent')) FC.config.recentDays = Math.max(3, Math.min(60, +g('fcRecent').value || 14));
+  if (g('fcHeat')) FC.config.heatPct = Math.max(5, Math.min(60, +g('fcHeat').value || 15));
+  if (g('fcKcMode')) FC.config.kcMode = g('fcKcMode').value;
+};
+FC.mcmOf = function (d) { return FC.config.kcMode === 'pot' ? d.mcmPot : d.mcmAct; };
+FC.render = function () {
+  FC.renderMeta(); FC.renderAlerts(); FC.renderKpi();
+  FC.renderDays(); FC.renderDists(); FC.drawChart();
+};
+FC.renderMeta = function () {
+  const el = document.getElementById('fcMeta');
+  if (!el) return;
+  const age = FC.ageHours();
+  let s = FC.fetchedAt ? 'آخر تحديث: ' + new Date(FC.fetchedAt).toLocaleString('ar-EG') : 'لم يُجلب التنبؤ بعد';
+  if (age != null && age > 24) s += ' ⚠️ مضى عليه أكثر من ' + Math.round(age / 24) + ' يوم — أعد الجلب';
+  if (FC.loc.length) s += ' · ' + FC.loc.length + ' هندسة · معايرة Kc ' + FC.num(FC.kcCoverage(), 0) + '٪';
+  if (FC.supply && FC.supply.src) s += ' · المنصرف: ' + FC.supply.src;
+  el.textContent = s;
+};
+FC.renderAlerts = function () {
+  const box = document.getElementById('fcAlerts');
+  if (!box) return;
+  if (!FC.alerts.length) { box.innerHTML = ''; return; }
+  const cls = { r: 'r', a: 'w', w: 'w', g: 'g', b: '' };
+  box.innerHTML = '<div class="panel"><div class="panel-head"><div class="panel-title">🚨 الإنذارات والتوصيات</div></div>' +
+    '<div class="panel-body">' + FC.alerts.map(function (a) {
+      return '<div class="wp-note ' + (cls[a.lvl] || '') + '" style="margin-bottom:9px">' +
+        '<b>' + FC.esc(a.ttl) + '</b><br>' + FC.esc(a.txt) +
+        '<br><b>الإجراء:</b> ' + FC.esc(a.act) + '</div>';
+    }).join('') + '</div></div>';
+};
+FC.renderKpi = function () {
+  const box = document.getElementById('fcKpis');
+  if (!box) return;
+  const D = FC.dayTotals;
+  if (!D.length) { box.innerHTML = ''; return; }
+  const vals = D.map(FC.mcmOf);
+  const peak = Math.max.apply(null, vals), pi = vals.indexOf(peak);
+  const sup = FC.supply.mcm;
+  const defDays = Number.isFinite(sup) ? vals.filter(function (v) { return v > sup; }).length : null;
+  const etoMed = FC.median(D.map(function (d) { return d.eto; }));
+  const heat = D.filter(function (d) { return Number.isFinite(d.eto) && (d.eto >= etoMed * (1 + FC.config.heatPct / 100) || (Number.isFinite(d.tmax) && d.tmax >= 40)); }).length;
+  const tot = vals.reduce(function (s, v) { return s + v; }, 0);
+  const k = function (c, l, v, u, s) {
+    return '<div class="wp-kpi ' + c + '"><span class="l">' + l + '</span><span class="v">' + v +
+      '<span class="u"> ' + (u || '') + '</span></span><span class="s">' + (s || '') + '</span></div>';
+  };
+  let h = '';
+  h += k('', 'إجمالى الاحتياج المتوقع', FC.num(tot, 1), 'مليون م³', 'خلال ' + D.length + ' يوم');
+  h += k(peak > (sup || Infinity) ? 'r' : 'a', 'أعلى احتياج يومى', FC.num(peak, 2), 'مليون م³',
+    'يوم ' + (D[pi] ? D[pi].date.slice(8, 10) + '/' + D[pi].date.slice(5, 7) : '—'));
+  h += k(defDays ? 'r' : defDays === 0 ? 'g' : '', 'أيام العجز المتوقعة',
+    defDays == null ? '—' : FC.fmt(defDays), defDays == null ? '' : 'من ' + D.length,
+    Number.isFinite(sup) ? 'مقابل ' + FC.num(sup, 2) + ' مليون م³/يوم' : 'المنصرف غير معلوم');
+  h += k(heat ? 'a' : 'g', 'أيام موجة البخر المرتفع', FC.fmt(heat), 'يوم',
+    'وسيط ETo ' + FC.num(etoMed, 2) + ' مم');
+  box.innerHTML = h;
+};
+FC.renderDays = function () {
+  const tb = document.getElementById('fcDayTbl');
+  if (!tb) return;
+  const D = FC.dayTotals;
+  if (!D.length) return;
+  const sup = FC.supply.mcm;
+  const wd = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+  const etoMed = FC.median(D.map(function (d) { return d.eto; }));
+  tb.innerHTML = D.map(function (d) {
+    const v = FC.mcmOf(d);
+    const bal = Number.isFinite(sup) ? sup - v : NaN;
+    const hot = Number.isFinite(d.eto) && (d.eto >= etoMed * (1 + FC.config.heatPct / 100) || (Number.isFinite(d.tmax) && d.tmax >= 40));
+    let tag = '<span class="wp-tag wp-t-i">غير معلوم</span>';
+    if (Number.isFinite(bal)) tag = bal < 0 ? '<span class="wp-tag wp-t-u">عجز</span>'
+      : bal < sup * .08 ? '<span class="wp-tag wp-t-e">حدّى</span>' : '<span class="wp-tag wp-t-c">كافٍ</span>';
+    const dt = new Date(d.date + 'T00:00:00');
+    return '<tr' + (Number.isFinite(bal) && bal < 0 ? ' style="background:var(--red-soft)"' : '') + '>' +
+      '<td>' + wd[dt.getDay()] + '</td>' +
+      '<td style="font-family:var(--mono)">' + d.date.slice(8, 10) + '/' + d.date.slice(5, 7) + '</td>' +
+      '<td>' + FC.num(d.eto, 2) + (hot ? ' 🔥' : '') + '</td>' +
+      '<td>' + FC.num(d.tmax, 0) + '</td><td>' + FC.num(d.rain, 1) + '</td>' +
+      '<td><b>' + FC.num(v, 2) + '</b></td><td>' + FC.num(v * 1e6 / 86400, 1) + '</td>' +
+      '<td>' + FC.num(sup, 2) + '</td><td>' + FC.num(bal, 2) + '</td><td>' + tag + '</td></tr>';
+  }).join('');
+};
+FC.renderDists = function () {
+  const tb = document.getElementById('fcDistTbl');
+  if (!tb) return;
+  if (!FC.dayTotals.length) return;
+  const month = +FC.dates[0].slice(5, 7);
+  const agg = {};
+  FC.rows.forEach(function (r) {
+    if (!agg[r.id]) agg[r.id] = { sum: 0, peak: 0, eto: [], n: 0 };
+    const a = agg[r.id];
+    const v = FC.config.kcMode === 'pot' ? r.mcm * (FC.kc[r.id][month].pot / FC.kc[r.id][month].act || 1) : r.mcm;
+    if (Number.isFinite(v)) { a.sum += v; if (v > a.peak) a.peak = v; }
+    if (Number.isFinite(r.eto)) { a.eto.push(r.eto); }
+    a.n++;
+  });
+  const total = Object.keys(agg).reduce(function (s, k) { return s + agg[k].sum; }, 0);
+  tb.innerHTML = FC.loc.map(function (L) {
+    const a = agg[L.id], A = FC.area[L.id];
+    if (!a || !A) return '';
+    const k = FC.kc[L.id][month] || {};
+    const days = FC.dayTotals.length;
+    const perFd = A.fd ? a.sum * 1e6 / A.fd / days : NaN;
+    const srcTag = FC.kcSrc[L.id][month] === 'معايَر' ? 'wp-t-c' : FC.kcSrc[L.id][month] === 'عام غير معايَر' ? 'wp-t-u' : 'wp-t-e';
+    return '<tr><td><b style="color:' + L.c + '">' + FC.esc(L.n) + '</b></td>' +
+      '<td>' + FC.fmt(A.fd) + '</td>' +
+      '<td>' + FC.num(FC.config.kcMode === 'pot' ? k.pot : k.act, 2) + '</td>' +
+      '<td><span class="wp-tag ' + srcTag + '">' + FC.esc(FC.kcSrc[L.id][month]) + '</span></td>' +
+      '<td>' + FC.num(FC.median(a.eto), 2) + '</td>' +
+      '<td>' + FC.num(a.peak, 2) + '</td><td>' + FC.num(a.sum, 1) + '</td>' +
+      '<td>' + FC.num(perFd, 1) + '</td>' +
+      '<td>' + FC.num(total ? a.sum / total * 100 : NaN, 0) + '٪</td></tr>';
+  }).join('');
+  const note = document.getElementById('fcKcNote');
+  if (note) note.textContent = 'معاملات شهر ' + month + ' · تغطية المعايرة ' + FC.num(FC.kcCoverage(), 0) + '٪';
+};
+FC.drawChart = function () {
+  const cv = document.getElementById('fcChart');
+  if (!cv || typeof Chart === 'undefined' || !FC.dayTotals.length) return;
+  try { if (FC.charts.main) FC.charts.main.destroy(); } catch (e) { /* تجاهل */ }
+  const D = FC.dayTotals, sup = FC.supply.mcm;
+  const labels = D.map(function (d) { return d.date.slice(8, 10) + '/' + d.date.slice(5, 7); });
+  const need = D.map(FC.mcmOf);
+  const ds = [
+    { type: 'bar', label: 'ETo متوقع مم', data: D.map(function (d) { return d.eto; }), backgroundColor: 'rgba(168,106,42,.35)', borderColor: '#a86a2a', borderWidth: 1, yAxisID: 'y1', order: 3 },
+    { type: 'line', label: 'الاحتياج مليون م³', data: need, borderColor: '#167b86', backgroundColor: 'rgba(22,123,134,.12)', fill: true, tension: .25, yAxisID: 'y', order: 1 }
+  ];
+  if (Number.isFinite(sup) && sup > 0) ds.push({
+    type: 'line', label: 'المنصرف المرجعى', data: D.map(function () { return sup; }),
+    borderColor: '#9c3a28', borderDash: [6, 4], pointRadius: 0, yAxisID: 'y', order: 2
+  });
+  FC.charts.main = new Chart(cv.getContext('2d'), {
+    data: { labels: labels, datasets: ds },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { font: { family: 'Cairo' } } } },
+      scales: {
+        y: { title: { display: true, text: 'مليون م³/يوم' }, beginAtZero: true },
+        y1: { position: 'left', grid: { drawOnChartArea: false }, title: { display: true, text: 'ETo مم' }, beginAtZero: true },
+        x: { ticks: { font: { size: 9 } } }
+      }
+    }
+  });
+};
+FC.exportCsv = function () {
+  if (!FC.rows.length) { FC.log('لا نتائج للتصدير.', 'w'); return; }
+  const head = ['date', 'district', 'ETo_mm', 'rain_mm', 'Kc', 'Kc_source', 'net_mm', 'demand_MCM', 'demand_m3s', 'feddan', 'supply_MCM'];
+  const lines = [head.join(',')];
+  const sup = FC.supply.mcm;
+  FC.rows.forEach(function (r) {
+    const month = +r.date.slice(5, 7);
+    lines.push([r.date, FC.distName(r.id), FC.num(r.eto, 2), FC.num(r.pcp, 1), FC.num(r.kc, 3),
+      (FC.kcSrc[r.id] || {})[month] || '', FC.num(r.net, 2), FC.num(r.mcm, 4), FC.num(r.q, 2),
+      (FC.area[r.id] || {}).fd || '', FC.num(sup, 3)]
+      .map(function (v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; }).join(','));
+  });
+  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'giza-water-forecast-' + (FC.dates[0] || '') + '.csv';
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 1500);
+  FC.log('صُدّر ' + FC.rows.length + ' صفاً.', 's');
+};
+FC.after = function () {
+  ['fcDays', 'fcSupMode', 'fcSupVal', 'fcRecent', 'fcHeat', 'fcKcMode'].forEach(function (id) {
+    const e = document.getElementById(id);
+    if (e) e.addEventListener('change', function () { FC.syncControls(); FC.save(); FC.compute(); });
+  });
+  if (!FC.ready()) {
+    FC.setStatus('ابدأ من تبويب WaPOR: ولّد شبكة التحليل', '');
+    FC.log('التبويب يحتاج شبكة خلايا التحليل لحساب المساحات — ولّدها من تبويب WaPOR.', 'w');
+  } else if (!FC.dates.length) {
+    FC.setStatus('جاهز — اضغط جلب التنبؤ', '');
+  }
+  if (FC.dates.length) FC.compute(); else FC.render();
+};
+FC.mount = function () {
+  const root = document.getElementById('fcRoot');
+  if (!root) return;
+  if (!FC.dates.length) FC.load();
+  root.innerHTML = FC.viewHtml();
+  FC.after();
+};
+window.FC = FC;
+
+/* ── ربط التبويب التاسع ── */
+(function(){
+  var prev = switchTab;
+  switchTab = function(i){
+    prev(i);
+    if (i === 9 && window.FC) requestAnimationFrame(function(){ FC.mount(); });
   };
 })();
 </script>

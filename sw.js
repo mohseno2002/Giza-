@@ -1,12 +1,12 @@
 /* ══════════════════════════════════════════
    Service Worker — ري الجيزة PWA
-   v32 — تبويب الإجهاد المائى + فصل الحشائش المائية عن نبات الجناب بـ NDMI
+   v33 — تبويب الإنذار المبكر: تنبؤ ETo لكل هندسة + Kc معايَر من WaPOR
    تاريخ: 2026-07-30
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v32';
-const STATIC_CACHE = 'static-v32';
-const DATA_CACHE   = 'data-v32';
+const CACHE_NAME   = 'ري-الجيزة-v33';
+const STATIC_CACHE = 'static-v33';
+const DATA_CACHE   = 'data-v33';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [
@@ -60,6 +60,7 @@ const NEVER_CACHE_ORIGINS = [
   'earth-search.aws.element84.com',
   'amazonaws.com',
   'overpass-api.de',
+  'api.open-meteo.com',
 ];
 
 /* ─── Fetch Strategy ─── */
