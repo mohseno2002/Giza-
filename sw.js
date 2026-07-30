@@ -1,12 +1,12 @@
 /* ══════════════════════════════════════════
    Service Worker — ري الجيزة PWA
-   v31 — تبويب «الإجهاد المائى والتشخيص»: RET + رطوبة تربة WaPOR + NDMI
+   v32 — تبويب الإجهاد المائى + فصل الحشائش المائية عن نبات الجناب بـ NDMI
    تاريخ: 2026-07-30
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v31';
-const STATIC_CACHE = 'static-v31';
-const DATA_CACHE   = 'data-v31';
+const CACHE_NAME   = 'ري-الجيزة-v32';
+const STATIC_CACHE = 'static-v32';
+const DATA_CACHE   = 'data-v32';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [

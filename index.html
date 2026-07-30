@@ -13587,7 +13587,8 @@ const WW = {
     group: "mains",
     canal: "m_giza",
     fromDate: "", toDate: "", cloudMax: 30, startKm: 35.91, endKm: 103.84,
-    segmentKm: 1, corridorM: 180, ndvi: .35, minCluster: 3
+    segmentKm: 1, corridorM: 180, ndvi: .35, minCluster: 3,
+    ndmiTh: .20, ndmiDemote: false
   },
   scenes: [], selectedCurrent: "", selectedPrevious: "",
   results: [], lastRun: null, validation: {}, history: [], missions: [], maintenance: [], logs: [],
@@ -13793,6 +13794,8 @@ WW.view = function(){
           <div class="weed-field"><label>إلى تاريخ</label><input id="wwToDate" type="date" value="${esc(c.toDate)}"></div>
           <div class="weed-field"><label>أقصى سحب بالمشهد</label><input id="wwCloud" type="number" min="5" max="80" step="5" value="${c.cloudMax}"><span class="weed-help">٪ من بيانات Sentinel‑2 الوصفية</span></div>
           <div class="weed-field"><label>عتبة NDVI للاشتباه</label><input id="wwNdvi" type="number" min=".2" max=".75" step=".05" value="${c.ndvi}"><span class="weed-help">تُعايَر لاحقاً بالمعاينات</span></div>
+          <div class="weed-field"><label>عتبة NDMI للنبات المائى</label><input id="wwNdmi" type="number" min="0" max=".6" step=".05" value="${(+c.ndmiTh).toFixed(2)}"><span class="weed-help">المحتوى المائى الذى يفصل الطافى عن أعشاب الجناب</span></div>
+          <div class="weed-field"><label>خفض أولوية نبات الجناب</label><label style="display:flex;align-items:center;gap:7px;font-weight:400;font-size:.78rem;padding-top:6px"><input id="wwNdmiDemote" type="checkbox" ${c.ndmiDemote?"checked":""} style="width:auto"> درجة واحدة عند غياب إسناد هيدروليكى</label><span class="weed-help">مطفأ افتراضياً — لا يغيّر أى نتيجة حتى تفعّله</span></div>
           <div class="weed-field"><label>بداية الفحص ك</label><input id="wwStartKm" type="number" min="${cn.km0}" max="${cn.km1}" step=".5" value="${c.startKm}"></div>
           <div class="weed-field"><label>نهاية الفحص ك</label><input id="wwEndKm" type="number" min="${cn.km0}" max="${cn.km1}" step=".5" value="${c.endKm}"></div>
           <div class="weed-field"><label>طول القطاع</label><select id="wwStep">
@@ -13867,8 +13870,8 @@ WW.view = function(){
       <div class="weed-body">
         <div class="weed-table-wrap">
           <table class="weed-table">
-            <thead><tr><th>القطاع</th><th>الحبس</th><th>المساحة م²</th><th>التغطية ٪</th><th>الطول المتأثر</th><th>التغير</th><th>NDVI</th><th>جودة البيانات</th><th>الثقة</th><th>الإسناد الهيدروليكى</th><th>الأولوية</th><th>المعاينة</th><th>ملاحظة</th><th>مأمورية</th></tr></thead>
-            <tbody id="wwRows"><tr><td colspan="14"><div class="weed-empty"><b>لا توجد نتائج بعد</b>ابحث عن الصور ثم شغّل التحليل. لن تُعرض أرقام افتراضية.</div></td></tr></tbody>
+            <thead><tr><th>القطاع</th><th>الحبس</th><th>المساحة م²</th><th>التغطية ٪</th><th>الطول المتأثر</th><th>التغير</th><th>NDVI</th><th>NDMI · الطبيعة</th><th>جودة البيانات</th><th>الثقة</th><th>الإسناد الهيدروليكى</th><th>الأولوية</th><th>المعاينة</th><th>ملاحظة</th><th>مأمورية</th></tr></thead>
+            <tbody id="wwRows"><tr><td colspan="15"><div class="weed-empty"><b>لا توجد نتائج بعد</b>ابحث عن الصور ثم شغّل التحليل. لن تُعرض أرقام افتراضية.</div></td></tr></tbody>
           </table>
         </div>
         <div class="weed-note info" id="wwMethod"><b>منهج التصنيف:</b> قناع SCL للسحب والظلال، ثم NDVI ≥ ${(+c.ndvi).toFixed(2)} مع سياق مائى من MNDWI/SCL للصورتين، واستبعاد حافتى المجرى، وحذف التجمعات الأقل من ${c.minCluster} بكسلات متصلة. الإسناد الهيدروليكى يعنى انحراف فرق المنسوب عن مرجع الموقع أو انخفاض التصرف عن وسيط سجله؛ ولا يثبت السببية بمفرده.</div>
@@ -13980,6 +13983,8 @@ WW.readControls = function(){
   WW.config.toDate=v("wwToDate")||WW.config.toDate;
   WW.config.cloudMax=Math.max(5,Math.min(80,+v("wwCloud")||30));
   WW.config.ndvi=Math.max(.2,Math.min(.75,+v("wwNdvi")||.35));
+  WW.config.ndmiTh=Math.max(0,Math.min(.6,+v("wwNdmi")||.20));
+  const dm=WW.$("wwNdmiDemote");if(dm)WW.config.ndmiDemote=!!dm.checked;
   const K0=WW.km0(),K1=WW.km1();
   WW.config.startKm=Math.max(K0,Math.min(K1-.5,+v("wwStartKm")||K0));
   WW.config.endKm=Math.max(K0+.5,Math.min(K1,+v("wwEndKm")||K1));
@@ -14008,7 +14013,7 @@ WW.log = function(msg,kind){
 WW.setBusy = function(on){
   WW.running=!!on;
   ["wwFind","wwAnalyze","wwClear"].forEach(id=>{const e=WW.$(id);if(e)e.disabled=on});
-  ["wwFromDate","wwToDate","wwCloud","wwNdvi","wwStartKm","wwEndKm","wwStep","wwCorridor","wwCurrent","wwPrevious"].forEach(id=>{const e=WW.$(id);if(e)e.disabled=on});
+  ["wwFromDate","wwToDate","wwCloud","wwNdvi","wwNdmi","wwNdmiDemote","wwStartKm","wwEndKm","wwStep","wwCorridor","wwCurrent","wwPrevious"].forEach(id=>{const e=WW.$(id);if(e)e.disabled=on});
   const c=WW.$("wwCancel");if(c)c.disabled=!on;
 };
 WW.populateSceneSelects = function(){
@@ -14170,7 +14175,10 @@ WW.metrics = function(scene,i){
   if(![red,green,nir,swir].every(Number.isFinite)||!WW.validScl(scl))return null;
   const ndvi=(nir-red)/(nir+red||1e-9),mndwi=(green-swir)/(green+swir||1e-9);
   const ndbi=(swir-nir)/(swir+nir||1e-9);
-  return {ndvi,mndwi,ndbi,water:Math.round(scl)===6||(mndwi>.05&&ndvi<.25)};
+  /* NDMI بصيغة Gao — محتوى الماء داخل نسيج النبات (B08 مقابل B11).
+     يفصل النبات المائى الطافى (محتوى مائى مرتفع) عن أعشاب الجناب الجافة. */
+  const ndmi=(nir-swir)/(nir+swir||1e-9);
+  return {ndvi,mndwi,ndbi,ndmi,water:Math.round(scl)===6||(mndwi>.05&&ndvi<.25)};
 };
 WW.filterClusters = function(mask,w,h,minCount){
   const n=mask.length,seen=new Uint8Array(n),keep=new Uint8Array(n),queue=new Int32Array(n);
@@ -14192,10 +14200,11 @@ WW.classify = function(current,previous,g){
   const water=new Uint8Array(n),waterC=new Uint8Array(n),waterP=new Uint8Array(n);
   const cross=new Float32Array(n),bin=new Int16Array(n),ndviC=new Float32Array(n),ndviP=new Float32Array(n);
   const mndwiC=new Float32Array(n),mndwiP=new Float32Array(n),ndbiC=new Float32Array(n),ndbiP=new Float32Array(n);
+  const ndmiC=new Float32Array(n),ndmiP=new Float32Array(n);
   const bins=Math.ceil(g.len/20)+2;
   const minCross=new Float32Array(bins),maxCross=new Float32Array(bins);
   minCross.fill(Infinity);maxCross.fill(-Infinity);bin.fill(-1);
-  [ndviC,ndviP,mndwiC,mndwiP,ndbiC,ndbiP].forEach(a=>a.fill(NaN));
+  [ndviC,ndviP,mndwiC,mndwiP,ndbiC,ndbiP,ndmiC,ndmiP].forEach(a=>a.fill(NaN));
   let insideCount=0;
   for(let row=0;row<g.height;row++)for(let col=0;col<g.width;col++){
     const i=row*g.width+col,x=g.minX+(col+.5)*g.dx,y=g.maxY-(row+.5)*g.dy;
@@ -14204,8 +14213,8 @@ WW.classify = function(current,previous,g){
     const cr=(-wx*g.vy+wy*g.vx)/g.len;if(Math.abs(cr)>g.half)continue;
     inside[i]=1;insideCount++;cross[i]=cr;const bi=Math.min(bins-1,Math.max(0,Math.floor(t*g.len/20)));bin[i]=bi;
     const mc=WW.metrics(current,i),mp=WW.metrics(previous,i);
-    if(mc){validC[i]=1;ndviC[i]=mc.ndvi;mndwiC[i]=mc.mndwi;ndbiC[i]=mc.ndbi;if(mc.water)waterC[i]=1}
-    if(mp){validP[i]=1;ndviP[i]=mp.ndvi;mndwiP[i]=mp.mndwi;ndbiP[i]=mp.ndbi;if(mp.water)waterP[i]=1}
+    if(mc){validC[i]=1;ndviC[i]=mc.ndvi;mndwiC[i]=mc.mndwi;ndbiC[i]=mc.ndbi;ndmiC[i]=mc.ndmi;if(mc.water)waterC[i]=1}
+    if(mp){validP[i]=1;ndviP[i]=mp.ndvi;mndwiP[i]=mp.mndwi;ndbiP[i]=mp.ndbi;ndmiP[i]=mp.ndmi;if(mp.water)waterP[i]=1}
     if(mc?.water||mp?.water){
       water[i]=1;if(cr<minCross[bi])minCross[bi]=cr;if(cr>maxCross[bi])maxCross[bi]=cr;
     }
@@ -14251,13 +14260,23 @@ WW.classify = function(current,previous,g){
   }
   const encMin=Math.max(4,WW.config.minCluster),keepVeg=WW.filterClusters(encVeg,g.width,g.height,encMin);
   const keepBuilt=WW.filterClusters(encBuilt,g.width,g.height,encMin),keepLoss=WW.filterClusters(encLoss,g.width,g.height,encMin);
-  const stats=function(keep,ndvi){
-    let count=0,sum=0;const affected=new Set();
-    for(let i=0;i<n;i++)if(keep[i]){count++;sum+=ndvi[i];affected.add(bin[i])}
+  const stats=function(keep,ndvi,ndmi){
+    let count=0,sum=0,nd=0,ndN=0,aq=0,dry=0;const affected=new Set();
+    const th=WW.ndmiTh();
+    for(let i=0;i<n;i++)if(keep[i]){
+      count++;sum+=ndvi[i];affected.add(bin[i]);
+      if(ndmi&&Number.isFinite(ndmi[i])){
+        nd+=ndmi[i];ndN++;
+        if(ndmi[i]>=th)aq++;else dry++;
+      }
+    }
     return {count,area:count*g.pixelArea,meanNdvi:count?sum/count:null,
-      affectedM:Math.min(g.len,affected.size*20)};
+      affectedM:Math.min(g.len,affected.size*20),
+      meanNdmi:ndN?nd/ndN:null,ndmiCount:ndN,
+      aquaticArea:aq*g.pixelArea,dryArea:dry*g.pixelArea,
+      aquaticPct:ndN?aq/ndN*100:null};
   };
-  const a=stats(keepC,ndviC),b=stats(keepP,ndviP);
+  const a=stats(keepC,ndviC,ndmiC),b=stats(keepP,ndviP,ndmiP);
   const enc={available:!!previous,area:0,vegArea:0,builtArea:0,lossArea:0,affectedM:0,
     validPct:guardCount?guardValid/guardCount*100:0,type:"لا تغير دال"};
   if(previous){
@@ -14277,7 +14296,12 @@ WW.classify = function(current,previous,g){
   a.coverage=a.channelArea?a.area/a.channelArea*100:0;
   a.validPct=channelCount?validChannel/channelCount*100:0;
   a.previousArea=b.area;a.previousCoverage=a.channelArea?b.area/a.channelArea*100:0;
-  a.previousAffectedM=b.affectedM;a.previousMeanNdvi=b.meanNdvi;
+  a.previousAffectedM=b.affectedM;a.previousMeanNdvi=b.meanNdvi;a.previousMeanNdmi=b.meanNdmi;
+  /* مرجع الماء المكشوف داخل نفس القطاع: NDMI لبكسلات المياه غير المغطاة نباتاً،
+     يُعرض للمقارنة فقط ولا يدخل أى تصنيف. */
+  let wsum=0,wn=0;
+  for(let i=0;i<n;i++)if(channel[i]&&waterC[i]&&!keepC[i]&&Number.isFinite(ndmiC[i])){wsum+=ndmiC[i];wn++}
+  a.openWaterNdmi=wn?wsum/wn:null;a.openWaterPx=wn;
   a.change=a.area-b.area;a.insideCount=insideCount;a.encroachment=enc;
   return a;
 };
@@ -14324,6 +14348,29 @@ WW.hydraulicEvidence = function(seg,sceneDate){
   return {support:reasons.length>0,label:reasons.length?reasons.join(" + "):"لا انحراف هيدروليكى دال",
     date:bestDate,site:site.name,gap:+bestGap.toFixed(0)};
 };
+WW.ndmiTh = function(){
+  const v=+WW.config.ndmiTh;
+  return Number.isFinite(v)?Math.max(0,Math.min(.6,v)):.2;
+};
+/* طبيعة الاشتباه من المحتوى المائى — طبقة تفسير مستقلة لا تمس أى رقم قائم:
+   نبات طافٍ على الماء يحمل محتوى مائى مرتفع، وأعشاب الجناب الجافة لا تحمله. */
+WW.nature = function(s){
+  if(!s||!s.area)return {code:"clear",label:"لا اشتباه",note:""};
+  if(s.aquaticPct==null||!s.ndmiCount)
+    return {code:"na",label:"غير محسوب",note:"لا بكسلات NDMI صالحة داخل الاشتباه"};
+  const p=s.aquaticPct;
+  if(p>=65)return {code:"aquatic",label:"مائية طافية",
+    note:"محتوى مائى مرتفع فى "+p.toFixed(0)+"٪ من البكسلات — متسق مع نبات على سطح المياه"};
+  if(p<=35)return {code:"bank",label:"نبات جناب محتمل",
+    note:"محتوى مائى منخفض فى "+(100-p).toFixed(0)+"٪ من البكسلات — مُرجَّح أعشاب جافة على الجناب لا حشائش مائية"};
+  return {code:"mixed",label:"مختلط",
+    note:"محتوى مائى مرتفع فى "+p.toFixed(0)+"٪ فقط — يلزم فحص القطاع ميدانياً للفصل"};
+};
+WW.demote = function(pri){
+  const m={urgent:{code:"high",label:"مرتفعة"},high:{code:"med",label:"مراجعة"},
+    med:{code:"low",label:"متابعة"},low:{code:"low",label:"متابعة"}};
+  return m[pri&&pri.code]||pri;
+};
 WW.confidence = function(s,cloud,hasPrevious){
   if(!s.area)return {code:"none",label:"لا اشتباه"};
   let score=0;if(s.validPct>=80)score+=2;else if(s.validPct>=60)score++;
@@ -14369,13 +14416,20 @@ WW.processSegment = async function(seg,currentScene,previousScene,signal){
     const s=WW.classify(current,previous,g),cloud=WW.itemCloud(item);
     if(!s.channelArea)return {...base,status:"no-data",reason:"لم يُستنتج حرم مائى صالح",itemId:item.id,cloud};
     const hydro=WW.hydraulicEvidence(seg,currentScene.date),conf=WW.confidence(s,cloud,!!previous);
-    const pri=WW.priority(conf,hydro,s.area),field=WW.validation[seg.key]||{status:"unreviewed",note:""};
+    let pri=WW.priority(conf,hydro,s.area);
+    const nature=WW.nature(s);
+    const priRaw=pri;
+    if(WW.config.ndmiDemote&&nature.code==="bank"&&!hydro.support)pri=WW.demote(pri);
+    const field=WW.validation[seg.key]||{status:"unreviewed",note:""};
     const enc=s.encroachment||{available:false,area:0},encConf=WW.encConfidence(enc,cloud);
     enc.confidence=encConf;enc.priority=WW.encPriority(enc,encConf);
     return {...base,status:"ok",itemId:item.id,previousItemId:prevItem?.id||null,cloud,
       area:s.area,previousArea:s.previousArea,change:s.change,coverage:s.coverage,
       affectedM:s.affectedM,previousAffectedM:s.previousAffectedM,meanNdvi:s.meanNdvi,
       previousMeanNdvi:s.previousMeanNdvi,previousCoverage:s.previousCoverage,
+      meanNdmi:s.meanNdmi,previousMeanNdmi:s.previousMeanNdmi,aquaticPct:s.aquaticPct,
+      aquaticArea:s.aquaticArea,dryArea:s.dryArea,ndmiCount:s.ndmiCount,
+      openWaterNdmi:s.openWaterNdmi,nature:nature,priorityRaw:priRaw,
       validPct:s.validPct,channelArea:s.channelArea,encroachment:enc,
       confidence:conf,priority:pri,hydraulic:hydro,fieldStatus:field.status||"unreviewed",fieldNote:field.note||""};
   }catch(e){
@@ -14396,6 +14450,8 @@ WW.runPool = async function(items,limit,handler,onProgress){
 WW.historySignature = function(){
   const c=WW.config;
   return [c.canal,c.startKm,c.endKm,c.segmentKm,c.corridorM,(+c.ndvi).toFixed(2)].join("|");
+  /* ملاحظة: عتبة NDMI مُستبعدة من البصمة عن قصد — لا تغيّر أى مساحة أو تغطية
+     محفوظة، فإدخالها كان يقطع تسلسل المقارنة التاريخية بلا سبب فنى. */
 };
 WW.compactHistoryRow = function(r,previous){
   if(previous){
@@ -14403,11 +14459,14 @@ WW.compactHistoryRow = function(r,previous){
       status:r.previousItemId&&r.status==="ok"?"ok":"no-data",
       area:+r.previousArea||0,coverage:+r.previousCoverage||0,affectedM:+r.previousAffectedM||0,
       meanNdvi:r.previousMeanNdvi==null?null:+r.previousMeanNdvi,validPct:+r.validPct||0,
+      meanNdmi:r.previousMeanNdmi==null?null:+r.previousMeanNdmi,
       itemId:r.previousItemId||null,encArea:null};
   }
   return {key:r.key,from:r.from,to:r.to,reach:r.reach,status:r.status,
     area:+r.area||0,coverage:+r.coverage||0,affectedM:+r.affectedM||0,
     meanNdvi:r.meanNdvi==null?null:+r.meanNdvi,validPct:+r.validPct||0,itemId:r.itemId||null,
+    meanNdmi:r.meanNdmi==null?null:+r.meanNdmi,
+    aquaticPct:r.aquaticPct==null?null:+r.aquaticPct,nature:r.nature?r.nature.code:null,
     encArea:r.encroachment?.available?+r.encroachment.area||0:null,
     encType:r.encroachment?.type||null};
 };
@@ -14467,6 +14526,11 @@ WW.analyze = async function(){
 };
 
 WW.areaText = n=>Number.isFinite(+n)?Math.round(+n).toLocaleString("ar-EG"):"—";
+WW.natureBadge = function(nat){
+  if(!nat)return "";
+  const cls={aquatic:"high",bank:"clear",mixed:"med",na:"na",clear:"na"}[nat.code]||"na";
+  return '<span class="weed-badge '+cls+'" title="'+esc(nat.note||"")+'">'+esc(nat.label)+'</span>';
+};
 WW.badge = function(x){
   if(!x)return '<span class="weed-badge na">—</span>';
   return `<span class="weed-badge ${esc(x.code||"na")}">${esc(x.label||"—")}</span>`;
@@ -14496,16 +14560,18 @@ WW.renderResults = function(){
   const exp=WW.$("wwExport"),exp2=WW.$("wwExport2");if(exp)exp.disabled=!rows.length;if(exp2)exp2.disabled=!rows.length;
   const body=WW.$("wwRows");
   if(body){
-    if(!rows.length)body.innerHTML='<tr><td colspan="14"><div class="weed-empty"><b>لا توجد نتائج بعد</b>ابحث عن الصور ثم شغّل التحليل. لن تُعرض أرقام افتراضية.</div></td></tr>';
+    if(!rows.length)body.innerHTML='<tr><td colspan="15"><div class="weed-empty"><b>لا توجد نتائج بعد</b>ابحث عن الصور ثم شغّل التحليل. لن تُعرض أرقام افتراضية.</div></td></tr>';
     else body.innerHTML=rows.map(r=>{
-      if(r.status!=="ok")return `<tr data-key="${esc(r.key)}"><td class="num"><a href="${WW.earthUrl((r.pm||r.p0).lat,(r.pm||r.p0).lon)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline dotted">ك${r.from.toFixed(1)}–${r.to.toFixed(1)}</a></td><td>${esc(r.reach)}</td><td colspan="7"><span class="weed-badge na">لا بيانات صالحة</span> <span style="color:var(--ink-3);font-size:.68rem">${esc(r.reason||"")}</span></td><td>—</td><td>${WW.badge({code:"na",label:"غير مصنف"})}</td><td><select class="ww-field" data-key="${esc(r.key)}">${WW.fieldOptions((WW.validation[r.key]||{}).status||"unreviewed")}</select></td><td><button class="weed-btn ww-note" data-key="${esc(r.key)}" style="padding:4px 7px">✎</button></td><td><button class="weed-btn ww-mission" data-key="${esc(r.key)}" data-kind="weeds" style="padding:4px 7px">＋</button></td></tr>`;
+      if(r.status!=="ok")return `<tr data-key="${esc(r.key)}"><td class="num"><a href="${WW.earthUrl((r.pm||r.p0).lat,(r.pm||r.p0).lon)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline dotted">ك${r.from.toFixed(1)}–${r.to.toFixed(1)}</a></td><td>${esc(r.reach)}</td><td colspan="8"><span class="weed-badge na">لا بيانات صالحة</span> <span style="color:var(--ink-3);font-size:.68rem">${esc(r.reason||"")}</span></td><td>—</td><td>${WW.badge({code:"na",label:"غير مصنف"})}</td><td><select class="ww-field" data-key="${esc(r.key)}">${WW.fieldOptions((WW.validation[r.key]||{}).status||"unreviewed")}</select></td><td><button class="weed-btn ww-note" data-key="${esc(r.key)}" style="padding:4px 7px">✎</button></td><td><button class="weed-btn ww-mission" data-key="${esc(r.key)}" data-kind="weeds" style="padding:4px 7px">＋</button></td></tr>`;
       const ch=r.change==null?"—":(r.change>=0?"+":"")+WW.areaText(r.change);
       const h=r.hydraulic||{},field=WW.validation[r.key]||{status:r.fieldStatus||"unreviewed",note:r.fieldNote||""};
       return `<tr data-key="${esc(r.key)}">
         <td class="num"><a href="${WW.earthUrl(r.pm.lat,r.pm.lon)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline dotted" title="فتح القطاع على Google Earth">ك${r.from.toFixed(1)}–${r.to.toFixed(1)}</a></td><td>${esc(r.reach)}</td>
         <td class="num">${WW.areaText(r.area)}</td><td class="num">${r.coverage.toFixed(1)}</td>
         <td class="num">${Math.round(r.affectedM)} م</td><td class="num">${ch}</td>
-        <td class="num">${r.meanNdvi==null?"—":r.meanNdvi.toFixed(2)}</td><td class="num">${r.validPct.toFixed(0)}٪</td>
+        <td class="num">${r.meanNdvi==null?"—":r.meanNdvi.toFixed(2)}</td>
+        <td class="num" title="${esc((r.nature&&r.nature.note)||"")}${r.openWaterNdmi==null?"":" · ماء مكشوف "+r.openWaterNdmi.toFixed(2)}">${r.meanNdmi==null?"—":r.meanNdmi.toFixed(2)}${r.nature?" "+WW.natureBadge(r.nature):""}${r.priorityRaw&&r.priority&&r.priorityRaw.code!==r.priority.code?' <span class="weed-badge na" title="خُفِّضت الأولوية بناءً على المحتوى المائى">↓</span>':""}</td>
+        <td class="num">${r.validPct.toFixed(0)}٪</td>
         <td>${WW.badge(r.confidence)}</td>
         <td title="${esc((h.site||"")+" "+(h.date||""))}">${h.support?'<span class="weed-badge high">داعم</span> ':'<span class="weed-badge clear">غير دال</span> '}${esc(h.label||"—")}</td>
         <td>${WW.badge(r.priority)}</td>
@@ -14519,7 +14585,7 @@ WW.renderResults = function(){
     body.querySelectorAll(".ww-mission").forEach(b=>b.onclick=()=>WW.prefillMission(b.dataset.key,b.dataset.kind));
   }
   const method=WW.$("wwMethod");
-  if(method)method.innerHTML=`<b>منهج التصنيف:</b> قناع SCL للسحب والظلال، ثم NDVI ≥ ${WW.config.ndvi.toFixed(2)} مع سياق مائى من MNDWI/SCL للصورتين، واستبعاد حافتى المجرى، وحذف التجمعات الأقل من ${WW.config.minCluster} بكسلات متصلة. إجمالى الحرم المائى المستنتج فى النتائج الحالية ${channel?WW.areaText(channel)+" م²":"—"}. الإسناد الهيدروليكى مؤشر أولوية ولا يثبت السببية بمفرده.`;
+  if(method)method.innerHTML=`<b>منهج التصنيف:</b> قناع SCL للسحب والظلال، ثم NDVI ≥ ${WW.config.ndvi.toFixed(2)} مع سياق مائى من MNDWI/SCL للصورتين، واستبعاد حافتى المجرى، وحذف التجمعات الأقل من ${WW.config.minCluster} بكسلات متصلة. ثم تُفصل طبيعة الاشتباه بمؤشر المحتوى المائى NDMI = (B08−B11)/(B08+B11) بعتبة ${(+WW.config.ndmiTh).toFixed(2)}: النبات الطافى على الماء يحمل محتوى مائى مرتفع بخلاف أعشاب الجناب الجافة، والتصنيف عرضٌ تفسيرى لا يغيّر المساحات ولا التغطية${WW.config.ndmiDemote?"، وخفض الأولوية مفعَّل لقطاعات الجناب بلا إسناد هيدروليكى":""}. إجمالى الحرم المائى المستنتج فى النتائج الحالية ${channel?WW.areaText(channel)+" م²":"—"}. الإسناد الهيدروليكى مؤشر أولوية ولا يثبت السببية بمفرده.`;
   WW.drawMap();WW.renderEncroachments();WW.renderHistory();WW.renderMissions();WW.renderMaintenance();
 };
 WW.encFieldOptions = function(status){
@@ -14974,7 +15040,7 @@ WW.after = function(){
     WW.saveStOverrides();delete WW._pn[WW.config.canal];WW.mountView();
     toast("حُفظت كيلومترات المحطات محلياً","ok");
   };
-  const bindChange=["wwFromDate","wwToDate","wwCloud","wwNdvi","wwStartKm","wwEndKm","wwStep","wwCorridor"];
+  const bindChange=["wwFromDate","wwToDate","wwCloud","wwNdvi","wwNdmi","wwNdmiDemote","wwStartKm","wwEndKm","wwStep","wwCorridor"];
   bindChange.forEach(id=>{const e=WW.$(id);if(e)e.onchange=WW.readControls});
   const find=WW.$("wwFind"),an=WW.$("wwAnalyze"),cancel=WW.$("wwCancel"),clear=WW.$("wwClear");
   if(find)find.onclick=WW.searchScenes;if(an)an.onclick=WW.analyze;
