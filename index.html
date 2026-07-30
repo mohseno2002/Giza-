@@ -856,6 +856,7 @@ footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-to
   <div class="tab" onclick="switchTab(7)">🛰️ WaPOR الاستهلاك الفعلى</div>
   <div class="tab" onclick="switchTab(8)">💧 الإجهاد المائى والتشخيص</div>
   <div class="tab" onclick="switchTab(9)">🔮 الإنذار المبكر والتنبؤ</div>
+  <div class="tab" onclick="switchTab(10)">🌾 فقد الرقعة الزراعية</div>
 </div>
 
 <div class="picker">
@@ -980,6 +981,7 @@ footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-to
 <div class="section" id="sec7"><div id="wpRoot"></div></div>
 <div class="section" id="sec8"><div id="wsRoot"></div></div>
 <div class="section" id="sec9"><div id="fcRoot"></div></div>
+<div class="section" id="sec10"><div id="lcRoot"></div></div>
 
 <!-- SMART PANEL -->
 <div class="smart-panel" id="smartPanel">
@@ -18054,6 +18056,924 @@ window.FC = FC;
   switchTab = function(i){
     prev(i);
     if (i === 9 && window.FC) requestAnimationFrame(function(){ FC.mount(); });
+  };
+})();
+</script>
+<script>
+"use strict";
+/* ════════════════════════════════════════════════════════════════════
+   فقد الرقعة الزراعية — LC   (مرحلتان)
+   المرحلة (1) مسح: الإنتاج الحيوى السنوى WaPOR L2-TBP-A بدقة ~108 م
+     لثمانى سنوات. كل بكسل يُقارَن بتاريخه هو لا بجاره، فيلغى أثر نوع
+     المحصول واختلاف السنة المناخية. الفقد = انهيار الإنتاج تحت نسبة من
+     خط أساس البكسل، مستمراً سنوات متتالية، دون تعافٍ حتى آخر سنة —
+     وشرط الاستمرارية هو ما يفصل التجريف الحقيقى عن البور المؤقت.
+     ويُحسب المكسب (استصلاح) بنفس المنطق معكوساً، فالصافى هو الرقم الأمين.
+   المرحلة (2) تأكيد: البؤر المرشحة فقط تُقرأ من Sentinel-2 بدقة 10 م
+     فى موسم الذروة قبل وبعد، ويُفصل «مبانٍ» عن «تجريف/ردم» عن «بور»
+     بتغيّر NDVI وNDBI وسطوع SWIR.
+   أداة توجيه تفتيش لا إثبات قانونى: القمر لا يقرأ التراخيص.
+   ════════════════════════════════════════════════════════════════════ */
+const LC = {
+  MAPSET: 'L2-TBP-A', MAPSET_ALT: 'L1-TBP-A',
+  SAVE_KEY: 'giza.landchange.v1',
+  ASSETS: ['red', 'nir', 'swir16', 'scl'],
+  FEDDAN: 4200.83,
+  config: {
+    baseYears: 3, collapse: .25, persist: 2, minTbp: 5000, radiusM: 1500,
+    gainBase: 1000, gainTh: 8000, requireNoRecovery: true,
+    topN: 30, minFeddan: 1, anchorMonth: 7, cloudMax: 20, window: 25
+  },
+  mapset: '', years: [], grid: null, pix: [], vals: null, base: null,
+  lostYear: null, gain: null, hotspots: [], stats: {}, quality: {},
+  scenes: { before: null, after: null }, verified: 0,
+  running: false, abort: null, logs: [], charts: {}, picked: null, done: false
+};
+LC.fmt = function (n) { return Math.round(+n || 0).toLocaleString('ar-EG'); };
+LC.num = function (v, d) { return Number.isFinite(v) ? v.toFixed(d == null ? 2 : d) : '—'; };
+LC.esc = function (s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+};
+LC.log = function (m, k) {
+  LC.logs.unshift({ t: new Date().toLocaleTimeString('ar-EG'), m: m, k: k || '' });
+  if (LC.logs.length > 160) LC.logs.pop();
+  const el = document.getElementById('lcLog');
+  if (el) el.innerHTML = LC.logs.map(function (x) {
+    return '<div class="' + x.k + '">' + LC.esc(x.t) + ' — ' + LC.esc(x.m) + '</div>';
+  }).join('');
+};
+LC.setStatus = function (t, s) {
+  const el = document.getElementById('lcState');
+  if (!el) return;
+  el.textContent = t;
+  el.className = 'wp-bdg ' + (s === 'ok' ? 'ok' : s === 'bad' ? 'b' : s === 'busy' ? 'w' : '');
+};
+LC.setLoad = function (show, label, pct) {
+  const b = document.getElementById('lcProg'), l = document.getElementById('lcProgLab');
+  if (b) b.style.width = show ? Math.max(2, Math.min(100, pct || 0)) + '%' : '0%';
+  if (l) l.textContent = show ? (label || '') : '';
+};
+LC.hint = function (e) {
+  const m = String(e && e.message || e || '');
+  if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return ' — سبب مُرجّح: انقطاع الشبكة أو حجب CORS';
+  if (/HTTP 4\d\d/.test(m)) return ' — سبب مُرجّح: صيغة الطلب أو الصلاحيات';
+  if (/HTTP 5\d\d/.test(m)) return ' — سبب مُرجّح: عطل مؤقت بالخادم';
+  if (/بلاطة|EPSG/.test(m)) return ' — سبب مُرجّح: البؤرة تعبر حد صورة القمر';
+  return '';
+};
+LC.med = function (a) {
+  const v = a.filter(Number.isFinite).sort(function (x, y) { return x - y; });
+  if (!v.length) return NaN;
+  const m = Math.floor(v.length / 2);
+  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+};
+LC.dists = function () { return (typeof GZGEO !== 'undefined' && GZGEO.DIST) ? GZGEO.DIST : ((window.GZGEO || {}).DIST || []); };
+LC.distName = function (id) {
+  const d = LC.dists().find(function (x) { return x.id === id; });
+  return d ? d.n : (id || 'خارج الهندسات');
+};
+LC.net = function () { return (typeof GZGEO !== 'undefined' && GZGEO.NET) ? GZGEO.NET : ((window.GZGEO || {}).NET || []); };
+
+/* ───────── نطاق التحليل من شبكة الترع نفسها ───────── */
+LC.bounds = function () {
+  let la0 = 90, la1 = -90, lo0 = 180, lo1 = -180;
+  LC.net().forEach(function (b) {
+    if (!b || b.h === 'multi' || !b.p) return;
+    b.p.forEach(function (p) {
+      if (p[1] < la0) la0 = p[1]; if (p[1] > la1) la1 = p[1];
+      if (p[0] < lo0) lo0 = p[0]; if (p[0] > lo1) lo1 = p[0];
+    });
+  });
+  if (la0 > la1) return null;
+  const dLa = LC.config.radiusM / 111320, dLo = dLa / Math.cos((la0 + la1) / 2 * Math.PI / 180);
+  return { left: lo0 - dLo, right: lo1 + dLo, bottom: la0 - dLa, top: la1 + dLa };
+};
+LC.pixelAreaM2 = function (la, resX, resY) {
+  return (resX * 111320 * Math.cos(la * Math.PI / 180)) * (resY * 110540);
+};
+
+/* ───────── قارئ COG بالدقة الأصلية (لا يخفّض المستوى) ───────── */
+LC.readNative = async function (meta, signal) {
+  const b = LC.bounds();
+  if (!b) throw new Error('تعذر اشتقاق نطاق الشبكة');
+  const bb = [b.left, b.bottom, b.right, b.top].map(function (x) { return x.toFixed(5); }).join(',');
+  const key = 'lc1|' + meta.code + '|' + (meta.updated || meta.created || '') + '|' + bb;
+  if (window.WP && WP.cacheGet) {
+    const c = await WP.cacheGet(key);
+    if (c) {
+      c.values = c.values instanceof Float32Array ? c.values : new Float32Array(c.values);
+      c.cached = true;
+      return c;
+    }
+  }
+  await WP.ensureGeoTIFF();
+  const tiff = await GeoTIFF.fromUrl(meta.downloadUrl, { blockSize: 524288, cacheSize: 120 });
+  const image = await tiff.getImage(0);
+  if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+  const ext = (meta.extent && (meta.extent.wgs84 || meta.extent.srs)) || [-180, -60, 180, 60];
+  const W = image.getWidth(), H = image.getHeight();
+  const at = meta.affineTransform || [];
+  const resX = Math.abs(at[1] || (ext[2] - ext[0]) / W);
+  const resY = Math.abs(at[5] || at[1] || (ext[3] - ext[1]) / H);
+  const x0 = Math.max(0, Math.floor((b.left - ext[0]) / resX)), x1 = Math.min(W, Math.ceil((b.right - ext[0]) / resX));
+  const y0 = Math.max(0, Math.floor((ext[3] - b.top) / resY)), y1 = Math.min(H, Math.ceil((ext[3] - b.bottom) / resY));
+  if (x1 <= x0 || y1 <= y0) throw new Error('نطاق الجيزة خارج مدى الرستر');
+  const raw = await image.readRasters({ window: [x0, y0, x1, y1], samples: [0], interleave: true, signal: signal });
+  const scale = Number.isFinite(+meta.scale) ? +meta.scale : 1;
+  const offset = Number.isFinite(+meta.offset) ? +meta.offset : 0;
+  const nod = Number.isFinite(+meta.noDataValue) ? +meta.noDataValue : -9999;
+  const values = new Float32Array(raw.length);
+  let valid = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const v = raw[i];
+    if (!Number.isFinite(v) || v === nod || v <= -9990) values[i] = NaN;
+    else { values[i] = v * scale + offset; valid++; }
+  }
+  const grid = {
+    key: key, code: meta.code, values: values, width: x1 - x0, height: y1 - y0,
+    left: ext[0] + x0 * resX, top: ext[3] - y0 * resY, resX: resX, resY: resY,
+    spatial: raw.length ? valid / raw.length * 100 : 0, cached: false, savedAt: Date.now()
+  };
+  if (window.WP && WP.cachePut) { try { await WP.cachePut(grid); } catch (e) { /* الحصة */ } }
+  return grid;
+};
+LC.yearOf = function (meta) {
+  const m = WP.memberOf(meta);
+  return +(m.year || String(m.code || '').slice(0, 4)) || null;
+};
+
+/* ───────── المرحلة الأولى: المسح ───────── */
+LC.scan = async function () {
+  if (LC.running) return;
+  if (!window.WP || !WP.segIndex) { LC.log('وحدة WaPOR غير متاحة.', 'e'); return; }
+  if (!LC.net().length) { LC.log('شبكة الترع غير محمّلة.', 'e'); return; }
+  LC.syncControls();
+  const btn = document.getElementById('lcScan');
+  LC.running = true; LC.abort = new AbortController();
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="wp-spin"></span> جارٍ المسح...'; }
+  LC.setStatus('قراءة فهرس الإنتاج الحيوى', 'busy');
+  LC.setLoad(true, 'فهرس WaPOR...', 3);
+  try {
+    await WP.ensureGeoTIFF();
+    let ms = LC.MAPSET, items = [];
+    try { items = await WP.collectRasters(ms, LC.abort.signal); }
+    catch (e) { LC.log('تعذر فهرس ' + ms + ': ' + e.message + LC.hint(e), 'w'); }
+    if (!items.length) {
+      ms = LC.MAPSET_ALT;
+      LC.log('تحويل إلى ' + ms + ' (300 م) بديلاً عن الوطنى 100 م.', 'w');
+      items = await WP.collectRasters(ms, LC.abort.signal);
+    }
+    LC.mapset = ms;
+    const byYear = new Map();
+    items.forEach(function (x) { const y = LC.yearOf(x); if (y) byYear.set(y, x); });
+    const years = Array.from(byYear.keys()).sort(function (a, b) { return a - b; });
+    if (years.length < LC.config.baseYears + LC.config.persist)
+      throw new Error('عدد السنوات المتاحة ' + years.length + ' لا يكفى لأساس ' + LC.config.baseYears + ' سنوات واستمرارية ' + LC.config.persist);
+    LC.years = years;
+    LC.log('الفهرس: ' + ms + ' · ' + years.length + ' سنة (' + years[0] + '–' + years[years.length - 1] + ').', 's');
+
+    /* الخطوة 1: سنة أولى وأخيرة لتحديد البكسلات المرشحة */
+    LC.setStatus('قراءة الرستر بالدقة الأصلية', 'busy');
+    LC.setLoad(true, 'قراءة سنة ' + years[0] + '...', 8);
+    const g0 = await LC.readNative(byYear.get(years[0]), LC.abort.signal);
+    LC.setLoad(true, 'قراءة سنة ' + years[years.length - 1] + '...', 16);
+    const gN = await LC.readNative(byYear.get(years[years.length - 1]), LC.abort.signal);
+    LC.grid = { width: g0.width, height: g0.height, left: g0.left, top: g0.top, resX: g0.resX, resY: g0.resY };
+    if (gN.width !== g0.width || gN.height !== g0.height)
+      throw new Error('اختلاف أبعاد الرستر بين السنوات — تعذر المقارنة بكسل ببكسل');
+
+    /* الخطوة 2: بناء فهرس بكسلات الزمام */
+    LC.setLoad(true, 'اشتقاق نطاق الخدمة...', 22);
+    WP._segIdx = null;
+    const R = LC.config.radiusM;
+    const pix = [];
+    const n = g0.width * g0.height;
+    for (let i = 0; i < n; i++) {
+      const a = g0.values[i], b = gN.values[i];
+      if (!(Number.isFinite(a) && a > 0) && !(Number.isFinite(b) && b > 0)) continue;
+      const row = Math.floor(i / g0.width), col = i - row * g0.width;
+      const lo = g0.left + (col + .5) * g0.resX, la = g0.top - (row + .5) * g0.resY;
+      const near = WP.nearestSeg(la, lo, true);
+      if (!near.h || near.d > R) continue;
+      pix.push({ i: i, la: la, lo: lo, z: near.h, a: LC.pixelAreaM2(la, g0.resX, g0.resY) });
+    }
+    if (!pix.length) throw new Error('لم تقع أى بكسلات منتجة داخل نطاق خدمة الشبكة');
+    LC.pix = pix;
+    LC.log('بكسلات داخل نطاق الخدمة: ' + LC.fmt(pix.length) + ' · مساحة البكسل ' +
+      LC.num(pix[0].a / LC.FEDDAN, 2) + ' فدان.', 's');
+
+    /* الخطوة 3: قراءة كل السنوات وأخذ العينات */
+    const nY = years.length, np = pix.length;
+    const vals = new Float32Array(np * nY);
+    const put = function (gr, yi) {
+      for (let k = 0; k < np; k++) vals[k * nY + yi] = gr.values[pix[k].i];
+    };
+    put(g0, 0); put(gN, nY - 1);
+    for (let yi = 1; yi < nY - 1; yi++) {
+      if (LC.abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      LC.setLoad(true, 'قراءة سنة ' + years[yi] + '...', 24 + yi / nY * 46);
+      const gr = await LC.readNative(byYear.get(years[yi]), LC.abort.signal);
+      if (gr.width !== g0.width || gr.height !== g0.height)
+        throw new Error('اختلاف أبعاد رستر سنة ' + years[yi]);
+      put(gr, yi);
+    }
+    LC.vals = vals;
+    LC.setLoad(true, 'تحليل الانهيار والاستمرارية...', 76);
+    LC.analyse();
+    LC.setLoad(true, 'تجميع البؤر...', 90);
+    LC.cluster();
+    LC.done = true;
+    LC.setStatus('اكتمل المسح · ' + LC.hotspots.length + ' بؤرة', 'ok');
+    LC.log('اكتمل: فقد ' + LC.fmt(LC.stats.lostFd) + ' فدان · مكسب ' + LC.fmt(LC.stats.gainFd) +
+      ' فدان · صافٍ ' + LC.fmt(LC.stats.netFd) + ' فدان · أرضية الخطأ ' +
+      LC.num(LC.quality.floorPct, 2) + '٪.', 's');
+    LC.save();
+    LC.render();
+  } catch (e) {
+    if (e.name === 'AbortError') { LC.log('أُلغى المسح.', 'w'); LC.setStatus('تم الإلغاء', ''); }
+    else { LC.log('تعذّر المسح: ' + e.message + LC.hint(e), 'e'); LC.setStatus('فشل المسح: ' + e.message, 'bad'); }
+  } finally {
+    LC.running = false; LC.abort = null;
+    if (btn) { btn.disabled = false; btn.textContent = 'مسح كل السنوات'; }
+    LC.setLoad(false, '', 0);
+  }
+};
+LC.cancel = function () { if (LC.abort) LC.abort.abort(); };
+
+LC.analyse = function () {
+  const c = LC.config, years = LC.years, nY = years.length, np = LC.pix.length, V = LC.vals;
+  const nb = Math.max(1, Math.min(nY - c.persist, c.baseYears));
+  LC.base = new Float32Array(np);
+  LC.lostYear = new Int16Array(np);
+  LC.gain = new Uint8Array(np);
+  const agri = new Uint8Array(np);
+  let lostFd = 0, gainFd = 0, agriFd = 0;
+  const perDistYear = {}, perYear = {};
+  years.forEach(function (y) { perYear[y] = { lost: 0, gain: 0 }; });
+  /* أرضية الخطأ: نسبة الانهيار داخل سنوات الأساس نفسها — لا يُفترض أنها فقد */
+  let floorHits = 0, floorTot = 0;
+  for (let k = 0; k < np; k++) {
+    const off = k * nY, bvals = [];
+    for (let j = 0; j < nb; j++) bvals.push(V[off + j]);
+    const base = LC.med(bvals);
+    LC.base[k] = base;
+    const px = LC.pix[k], fd = px.a / LC.FEDDAN;
+    if (Number.isFinite(base) && base > c.minTbp) {
+      agri[k] = 1; agriFd += fd;
+      for (let j = 0; j < nb; j++) {
+        const r = V[off + j] / base;
+        if (Number.isFinite(r)) { floorTot++; if (r < c.collapse) floorHits++; }
+      }
+      /* انهيار مستمر */
+      const col = [];
+      for (let j = 0; j < nY; j++) {
+        const r = V[off + j] / base;
+        col.push(Number.isFinite(r) ? (r < c.collapse ? 1 : 0) : -1);
+      }
+      if (!c.requireNoRecovery || col[nY - 1] === 1) {
+        for (let j = nb; j <= nY - c.persist; j++) {
+          let run = true;
+          for (let q = 0; q < c.persist; q++) if (col[j + q] !== 1) { run = false; break; }
+          if (run) { LC.lostYear[k] = years[j]; break; }
+        }
+      }
+      if (LC.lostYear[k]) { lostFd += fd; perYear[LC.lostYear[k]].lost += fd; }
+    } else if (Number.isFinite(base) && base <= c.gainBase) {
+      /* مكسب: أرض غير منتجة فى الأساس صارت منتجة وثبتت */
+      const tail = [];
+      for (let j = Math.max(nb, nY - c.persist); j < nY; j++) tail.push(V[off + j]);
+      const t = LC.med(tail);
+      if (Number.isFinite(t) && t >= c.gainTh) {
+        LC.gain[k] = 1; gainFd += fd;
+        for (let j = nb; j < nY; j++) {
+          if (Number.isFinite(V[off + j]) && V[off + j] >= c.gainTh) { perYear[years[j]].gain += fd; break; }
+        }
+      }
+    }
+    const z = px.z || '—';
+    if (!perDistYear[z]) perDistYear[z] = { lost: {}, gain: {}, agriFd: 0, lostFd: 0, gainFd: 0 };
+    if (agri[k]) perDistYear[z].agriFd += fd;
+    if (LC.lostYear[k]) {
+      perDistYear[z].lost[LC.lostYear[k]] = (perDistYear[z].lost[LC.lostYear[k]] || 0) + fd;
+      perDistYear[z].lostFd += fd;
+    }
+    if (LC.gain[k]) perDistYear[z].gainFd += fd;
+  }
+  LC.agri = agri;
+  LC.stats = {
+    lostFd: lostFd, gainFd: gainFd, netFd: gainFd - lostFd, agriFd: agriFd,
+    perYear: perYear, perDist: perDistYear,
+    lostPct: agriFd ? lostFd / agriFd * 100 : 0
+  };
+  LC.quality = {
+    floorPct: floorTot ? floorHits / floorTot * 100 : 0,
+    floorFd: agriFd * (floorTot ? floorHits / floorTot : 0),
+    baseYears: years.slice(0, nb), pixels: np, agriPixels: Array.prototype.reduce.call(agri, function (s, v) { return s + v; }, 0)
+  };
+};
+
+/* ───────── تجميع البؤر المتصلة ───────── */
+LC.cluster = function () {
+  const G = LC.grid;
+  if (!G) { LC.hotspots = []; return; }
+  const idxOf = new Map();
+  LC.pix.forEach(function (p, k) { if (LC.lostYear[k]) idxOf.set(p.i, k); });
+  const seen = new Set(), out = [];
+  const W = G.width;
+  idxOf.forEach(function (k0, start) {
+    if (seen.has(start)) return;
+    const q = [start]; seen.add(start);
+    const members = [];
+    while (q.length) {
+      const i = q.pop(), k = idxOf.get(i);
+      members.push(k);
+      const row = Math.floor(i / W), col = i - row * W;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const rr = row + dy, cc = col + dx;
+        if (rr < 0 || cc < 0 || cc >= W || rr >= G.height) continue;
+        const j = rr * W + cc;
+        if (idxOf.has(j) && !seen.has(j)) { seen.add(j); q.push(j); }
+      }
+    }
+    let la = 0, lo = 0, area = 0, laMin = 90, laMax = -90, loMin = 180, loMax = -180;
+    const yrs = {};
+    members.forEach(function (k) {
+      const p = LC.pix[k];
+      la += p.la; lo += p.lo; area += p.a;
+      if (p.la < laMin) laMin = p.la; if (p.la > laMax) laMax = p.la;
+      if (p.lo < loMin) loMin = p.lo; if (p.lo > loMax) loMax = p.lo;
+      yrs[LC.lostYear[k]] = (yrs[LC.lostYear[k]] || 0) + 1;
+    });
+    const yr = Object.keys(yrs).sort(function (a, b) { return yrs[b] - yrs[a]; })[0];
+    out.push({
+      id: 'H' + String(out.length + 1).padStart(3, '0'),
+      n: members.length, members: members,
+      la: la / members.length, lo: lo / members.length,
+      laMin: laMin, laMax: laMax, loMin: loMin, loMax: loMax,
+      fd: area / LC.FEDDAN, z: LC.pix[members[0]].z, year: +yr,
+      verify: null
+    });
+  });
+  out.sort(function (a, b) { return b.fd - a.fd; });
+  LC.hotspots = out.filter(function (h) { return h.fd >= LC.config.minFeddan; });
+  LC.hotspots.forEach(function (h, i) { h.id = 'H' + String(i + 1).padStart(3, '0'); });
+};
+
+/* ───────── المرحلة الثانية: التأكيد بـ Sentinel-2 ───────── */
+LC.searchEpoch = async function (year, signal) {
+  const b = LC.bounds();
+  const mm = String(LC.config.anchorMonth).padStart(2, '0');
+  const mid = new Date(Date.UTC(year, LC.config.anchorMonth - 1, 15));
+  const w = Math.max(8, LC.config.window);
+  const from = new Date(mid.getTime() - w * 864e5).toISOString().slice(0, 10);
+  const to = new Date(mid.getTime() + w * 864e5).toISOString().slice(0, 10);
+  const u = new URL(WW.API);
+  u.searchParams.set('collections', WW.COLLECTION);
+  u.searchParams.set('bbox', [b.left, b.bottom, b.right, b.top].join(','));
+  u.searchParams.set('datetime', from + 'T00:00:00Z/' + to + 'T23:59:59Z');
+  u.searchParams.set('limit', '100');
+  u.searchParams.set('sortby', '-properties.datetime');
+  const data = await WW.fetchJSON(u.href, signal);
+  const ok = (data.features || []).filter(function (f) {
+    const a = f.assets || {};
+    return WW.itemCloud(f) <= LC.config.cloudMax && LC.ASSETS.every(function (k) { return a[k] && a[k].href; });
+  });
+  if (!ok.length) throw new Error('لا لقطة صالحة حول ' + mm + '/' + year + ' بسحابة ≤ ' + LC.config.cloudMax + '٪');
+  const groups = new Map();
+  ok.forEach(function (f) {
+    const dt = String((f.properties || {}).datetime || '').slice(0, 10);
+    const g = groups.get(dt) || { date: dt, items: [], cloud: 0 };
+    g.items.push(f); groups.set(dt, g);
+  });
+  const list = Array.from(groups.values());
+  list.forEach(function (g) {
+    g.cloud = g.items.reduce(function (s, f) { return s + WW.itemCloud(f); }, 0) / g.items.length;
+  });
+  list.sort(function (a, b2) { return (b2.items.length - a.items.length) || (a.cloud - b2.cloud); });
+  return list[0];
+};
+LC.itemFor = function (scene, la, lo) {
+  const hit = (scene.items || []).filter(function (f) {
+    const b = f.bbox;
+    return b && lo >= b[0] && lo <= b[2] && la >= b[1] && la <= b[3];
+  });
+  hit.sort(function (a, b) { return WW.itemCloud(a) - WW.itemCloud(b); });
+  return hit[0] || null;
+};
+LC.geomFor = function (h, epsg) {
+  const pad = 60;
+  const c = [
+    WW.toUtm(h.laMin, h.loMin, epsg), WW.toUtm(h.laMin, h.loMax, epsg),
+    WW.toUtm(h.laMax, h.loMin, epsg), WW.toUtm(h.laMax, h.loMax, epsg)
+  ];
+  const xs = c.map(function (p) { return p.x; }), ys = c.map(function (p) { return p.y; });
+  const minX = Math.min.apply(null, xs) - pad, maxX = Math.max.apply(null, xs) + pad;
+  const minY = Math.min.apply(null, ys) - pad, maxY = Math.max.apply(null, ys) + pad;
+  const width = Math.max(4, Math.min(400, Math.round((maxX - minX) / 10)));
+  const height = Math.max(4, Math.min(400, Math.round((maxY - minY) / 10)));
+  return { epsg: epsg, minX: minX, maxX: maxX, minY: minY, maxY: maxY, width: width, height: height };
+};
+/* التصنيف بدقة 10 م — يقرّر ما تسنده البيانات فقط:
+   «كانت خضراء وصارت غير خضراء» حكم قاطع من NDVI. أما الفصل بين الخرسانة
+   والأرض الجرداء فمؤشر NDBI لا يحسمه (كلاهما يرفع SWIR ويخفض NIR)، لذا
+   يُعرض كترجيح لا كتقرير. وقوة الدليل الحقيقية أن الانهيار استمر سنوات
+   دون تعافٍ فى المرحلة الأولى — والبور يتعافى. */
+LC.classifyHotspot = function (bef, aft, g) {
+  const n = g.width * g.height;
+  let used = 0, wasVeg = 0, conv = 0, green = 0, mid = 0, builtLike = 0, bareLike = 0, notVeg = 0;
+  for (let i = 0; i < n; i++) {
+    const rB = bef.red[i], nB = bef.nir[i], sB = bef.swir16[i], cB = bef.scl[i];
+    const rA = aft.red[i], nA = aft.nir[i], sA = aft.swir16[i], cA = aft.scl[i];
+    if (![rB, nB, sB, rA, nA, sA].every(Number.isFinite)) continue;
+    if (!WW.validScl(cB) || !WW.validScl(cA)) continue;
+    used++;
+    const ndviB = (nB - rB) / (nB + rB || 1e-9), ndviA = (nA - rA) / (nA + rA || 1e-9);
+    if (ndviB < .35) { notVeg++; continue; }            /* لم تكن مزروعة فى المرجع */
+    wasVeg++;
+    if (ndviA >= .35) { green++; continue; }
+    if (ndviA >= .25) { mid++; continue; }
+    conv++;
+    const ndbiA = (sA - nA) / (sA + nA || 1e-9);
+    const bright = sB > 0 ? (sA - sB) / sB : 0;
+    if (ndbiA >= .05 && bright >= .25) builtLike++; else bareLike++;
+  }
+  const px = 100;                                        /* م² للبكسل 10 م */
+  let code = 'na', label = 'غير محسوم', sub = '';
+  if (wasVeg >= 5) {
+    const cp = conv / wasVeg, gp = green / wasVeg;
+    if (cp >= .6) {
+      code = 'converted';
+      sub = builtLike > bareLike ? 'مُرجَّح مبانٍ أو ردم' : 'مُرجَّح أرض جرداء أو تجريف';
+      label = 'تحوّل مؤكَّد — ' + sub;
+    } else if (gp >= .5) { code = 'green'; label = 'ما زالت خضراء — يُرجَّح إيجابى كاذب'; }
+    else { code = 'partial'; label = 'تحوّل جزئى'; }
+  } else if (used) { code = 'na'; label = 'لم تكن مزروعة فى اللقطة المرجعية'; }
+  return {
+    code: code, label: label, sub: sub, used: used, wasVeg: wasVeg, notVeg: notVeg,
+    conv: conv, green: green, mid: mid, builtLike: builtLike, bareLike: bareLike,
+    confirmedFd: conv * px / LC.FEDDAN, changedPct: wasVeg ? conv / wasVeg * 100 : 0
+  };
+};
+LC.verify = async function () {
+  if (LC.running) return;
+  if (!LC.hotspots.length) { LC.log('لا بؤر للتأكيد — شغّل المسح أولاً.', 'w'); return; }
+  LC.syncControls();
+  const btn = document.getElementById('lcVerify');
+  LC.running = true; LC.abort = new AbortController();
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="wp-spin"></span> جارٍ التأكيد...'; }
+  LC.setStatus('البحث عن لقطتى المقارنة', 'busy');
+  LC.setLoad(true, 'فهرس Sentinel-2...', 5);
+  try {
+    await WP.ensureGeoTIFF();
+    WW.readerCache.clear();
+    const yB = LC.quality.baseYears[LC.quality.baseYears.length - 1] || LC.years[0];
+    const yA = LC.years[LC.years.length - 1];
+    LC.scenes.before = await LC.searchEpoch(yB, LC.abort.signal);
+    LC.scenes.after = await LC.searchEpoch(yA, LC.abort.signal);
+    LC.log('المقارنة بين ' + LC.scenes.before.date + ' و' + LC.scenes.after.date +
+      ' (سحابة ' + LC.num(LC.scenes.before.cloud, 0) + '٪ / ' + LC.num(LC.scenes.after.cloud, 0) + '٪).', 's');
+    const list = LC.hotspots.slice(0, Math.max(1, LC.config.topN));
+    let done = 0, okN = 0, fail = 0;
+    for (let i = 0; i < list.length; i++) {
+      if (LC.abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      const h = list[i];
+      try {
+        const iB = LC.itemFor(LC.scenes.before, h.la, h.lo);
+        const iA = LC.itemFor(LC.scenes.after, h.la, h.lo);
+        if (!iB || !iA) throw new Error('لا بلاطة تغطى البؤرة فى إحدى اللقطتين');
+        const epsg = WW.itemEpsg(iA);
+        if (WW.itemEpsg(iB) !== epsg) throw new Error('اختلاف نطاق UTM بين اللقطتين');
+        const g = LC.geomFor(h, epsg);
+        const bef = {}, aft = {};
+        for (let k = 0; k < LC.ASSETS.length; k++) {
+          bef[LC.ASSETS[k]] = await WW.readBand(iB, LC.ASSETS[k], g, LC.abort.signal);
+          aft[LC.ASSETS[k]] = await WW.readBand(iA, LC.ASSETS[k], g, LC.abort.signal);
+        }
+        h.verify = LC.classifyHotspot(bef, aft, g);
+        h.verify.before = LC.scenes.before.date; h.verify.after = LC.scenes.after.date;
+        okN++;
+      } catch (e) {
+        if (e.name === 'AbortError') throw e;
+        h.verify = { code: 'err', label: 'تعذّر التأكيد', why: e.message };
+        fail++;
+      } finally {
+        done++;
+        LC.setLoad(true, 'تأكيد البؤرة ' + done + '/' + list.length, 8 + done / list.length * 88);
+      }
+    }
+    LC.verified = okN;
+    LC.setStatus('اكتمل التأكيد · ' + okN + ' بؤرة', okN ? 'ok' : 'bad');
+    LC.log('التأكيد: ' + okN + ' نجحت · ' + fail + ' تعذّرت.', fail ? 'w' : 's');
+    LC.save();
+    LC.render();
+  } catch (e) {
+    if (e.name === 'AbortError') { LC.log('أُلغى التأكيد.', 'w'); LC.setStatus('تم الإلغاء', ''); }
+    else { LC.log('تعذّر التأكيد: ' + e.message + LC.hint(e), 'e'); LC.setStatus('فشل التأكيد: ' + e.message, 'bad'); }
+  } finally {
+    WW.readerCache.clear();
+    LC.running = false; LC.abort = null;
+    if (btn) { btn.disabled = false; btn.textContent = 'تأكيد البؤر بدقة 10 م'; }
+    LC.setLoad(false, '', 0);
+  }
+};
+
+/* ───────── الحفظ ───────── */
+LC.save = function () {
+  try {
+    localStorage.setItem(LC.SAVE_KEY, JSON.stringify({
+      config: LC.config, years: LC.years, mapset: LC.mapset,
+      stats: LC.stats, quality: LC.quality, scenes: LC.scenes,
+      hotspots: LC.hotspots.slice(0, 200).map(function (h) {
+        return {
+          id: h.id, n: h.n, la: h.la, lo: h.lo, fd: h.fd, z: h.z, year: h.year,
+          laMin: h.laMin, laMax: h.laMax, loMin: h.loMin, loMax: h.loMax, verify: h.verify
+        };
+      }), savedAt: Date.now()
+    }));
+  } catch (e) { /* الحصة */ }
+};
+LC.load = function () {
+  try {
+    const x = JSON.parse(localStorage.getItem(LC.SAVE_KEY) || '{}');
+    if (!x || !x.years || !x.years.length) return false;
+    LC.config = Object.assign(LC.config, x.config || {});
+    LC.years = x.years; LC.mapset = x.mapset || ''; LC.stats = x.stats || {};
+    LC.quality = x.quality || {}; LC.scenes = x.scenes || { before: null, after: null };
+    LC.hotspots = x.hotspots || []; LC.savedAt = x.savedAt || null;
+    LC.done = true;
+    return true;
+  } catch (e) { return false; }
+};
+
+/* ───────── الواجهة ───────── */
+LC.fld = function (l, inner, hint) {
+  return '<div class="wp-fld"><label>' + l + '</label>' + inner +
+    (hint ? '<span class="wp-hint">' + hint + '</span>' : '') + '</div>';
+};
+LC.viewHtml = function () {
+  const c = LC.config;
+  let h = '<section class="wapor-shell">';
+  h += '<div class="panel"><div class="panel-head">' +
+    '<div class="panel-title">🌾 فقد الرقعة الزراعية — مسح وتأكيد</div>' +
+    '<span id="lcState" class="wp-bdg">لم يُشغَّل المسح</span></div><div class="panel-body">' +
+    '<div class="wp-note"><b>لماذا لا تكفى مقارنة صورتين:</b> اختلاف الدورة المحصولية أو موعد الحصاد ' +
+    'أو بور موسم واحد كلها تُنتج «فقداً» وهمياً. لذلك يقيس المسح <b>الإنتاج الحيوى للسنة كاملة</b> ' +
+    '(WaPOR TBP السنوى)، ويقارن كل بكسل <b>بتاريخه هو</b> فيلغى أثر المحصول والمناخ، ' +
+    'ثم يشترط <b>استمرار الانهيار سنوات متتالية دون تعافٍ</b> — وهذا الشرط هو الفاصل بين ' +
+    'التجريف الحقيقى والبور المؤقت. ويُحسب المكسب (الاستصلاح) بنفس المنطق فيظهر الصافى.</div>';
+  h += '<div class="wp-grid wp-g4">' +
+    LC.fld('سنوات خط الأساس', '<input id="lcBase" type="number" min="2" max="5" step="1" value="' + c.baseYears + '">') +
+    LC.fld('عتبة الانهيار', '<input id="lcColl" type="number" min="0.05" max="0.6" step="0.05" value="' + c.collapse + '">', 'نسبة من إنتاج البكسل نفسه') +
+    LC.fld('سنوات الاستمرارية', '<input id="lcPers" type="number" min="1" max="4" step="1" value="' + c.persist + '">') +
+    LC.fld('حد الأرض الزراعية kg/ha', '<input id="lcMin" type="number" min="500" max="20000" step="500" value="' + c.minTbp + '">') +
+    LC.fld('نصف قطر الخدمة م', '<input id="lcR" type="number" min="500" max="4000" step="100" value="' + c.radiusM + '">') +
+    LC.fld('أصغر بؤرة فدان', '<input id="lcMinFd" type="number" min="0" max="50" step="0.5" value="' + c.minFeddan + '">') +
+    LC.fld('اشتراط عدم التعافى', '<select id="lcNoRec">' +
+      '<option value="1"' + (c.requireNoRecovery ? ' selected' : '') + '>نعم — أصرم</option>' +
+      '<option value="0"' + (!c.requireNoRecovery ? ' selected' : '') + '>لا</option></select>') +
+    LC.fld('حد المكسب kg/ha', '<input id="lcGain" type="number" min="2000" max="30000" step="1000" value="' + c.gainTh + '">') +
+    '</div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+    '<button class="dr-btn primary" id="lcScan" onclick="LC.scan()">مسح كل السنوات</button>' +
+    '<button class="dr-btn outline" onclick="LC.cancel()">إلغاء</button>' +
+    '<button class="dr-btn outline" onclick="LC.exportCsv()">تصدير البؤر CSV</button></div>' +
+    '<div class="wp-prog"><i id="lcProg"></i></div><div class="wp-hint" id="lcProgLab"></div>' +
+    '<div class="wp-hint" id="lcMeta"></div></div></div>';
+  h += '<div class="wp-grid wp-g4" id="lcKpis"></div>';
+  h += '<div id="lcFloor"></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">📉 الفقد والمكسب بالسنة</div></div>' +
+    '<div class="panel-body"><canvas id="lcChart" height="160"></canvas>' +
+    '<div class="table-scroll" style="max-height:300px;margin-top:14px"><table class="data-table">' +
+    '<thead><tr><th>الهندسة</th><th>الزمام المنتج فدان</th><th>الفقد فدان</th><th>٪ من الزمام</th>' +
+    '<th>المكسب فدان</th><th>الصافى</th></tr></thead>' +
+    '<tbody id="lcDistTbl"><tr><td colspan="6"><div class="wp-empty">—</div></td></tr></tbody></table></div></div></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">🔬 المرحلة الثانية — التأكيد بدقة 10 م</div>' +
+    '<span class="wp-hint" id="lcScenes"></span></div><div class="panel-body">' +
+    '<div class="wp-grid wp-g4">' +
+    LC.fld('شهر المقارنة', '<select id="lcMonth">' +
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (m) {
+        return '<option value="' + m + '"' + (c.anchorMonth === m ? ' selected' : '') + '>' + m + '</option>';
+      }).join('') + '</select>', 'يُفضَّل ذروة الموسم') +
+    LC.fld('نافذة البحث ± يوم', '<input id="lcWin" type="number" min="8" max="60" step="1" value="' + c.window + '">') +
+    LC.fld('حد السحاب ٪', '<input id="lcCloud" type="number" min="5" max="60" step="5" value="' + c.cloudMax + '">') +
+    LC.fld('عدد البؤر', '<input id="lcTop" type="number" min="1" max="120" step="1" value="' + c.topN + '">') +
+    '</div>' +
+    '<button class="dr-btn primary" id="lcVerify" onclick="LC.verify()">تأكيد البؤر بدقة 10 م</button>' +
+    '<div class="wp-note w" style="margin-top:12px"><b>حدود المعرفة:</b> ' +
+    'هذه أداة توجيه تفتيش لا إثبات قانونى — التحوّل المرخّص شكله الطيفى مطابق لغير المرخّص. ' +
+    'أصغر وحدة يكشفها المسح حوالى <b id="lcMdu">—</b> فدان، وينزل التأكيد بها إلى نحو ربع فدان. ' +
+    'ونطاق الزمام مشتق من شبكة الترع لا من الحدود المساحية الرسمية، فالأرقام «داخل نطاق الخدمة» ' +
+    'لا أرقام كادسترالية، ومرجعها الرسمى المساحة ولجان أملاك الدولة.</div></div></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">📍 البؤر مرتّبة بالمساحة</div>' +
+    '<div class="wp-seg" id="lcFlt"><button data-lcflt="all" class="on">الكل</button>' +
+    '<button data-lcflt="converted">تحوّل مؤكَّد</button><button data-lcflt="partial">جزئى</button>' +
+    '<button data-lcflt="green">إيجابى كاذب</button></div></div><div class="panel-body">' +
+    '<div class="table-scroll" style="max-height:430px"><table class="data-table">' +
+    '<thead><tr><th>البؤرة</th><th>الهندسة</th><th>سنة الفقد</th><th>المساحة فدان</th>' +
+    '<th>بكسلات</th><th>التأكيد</th><th>مؤكَّد فدان</th><th>الإحداثيات</th><th>عرض</th></tr></thead>' +
+    '<tbody id="lcHotTbl"><tr><td colspan="9"><div class="wp-empty"><b>لم يُشغَّل المسح بعد</b>لن تُعرض أرقام افتراضية.</div></td></tr></tbody>' +
+    '</table></div></div></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">🗺️ خريطة البؤر</div>' +
+    '<span class="wp-hint">اللون بسنة الفقد · الحجم بالمساحة</span></div>' +
+    '<div class="panel-body"><canvas id="lcMap" class="wp-map" height="330"></canvas>' +
+    '<div class="wp-lgd" id="lcLgd"></div>' +
+    '<div id="lcPick" class="wp-note" style="margin-top:10px">اضغط على أى بؤرة لعرض تفاصيلها.</div></div></div>';
+  h += '<div class="panel"><div class="panel-head"><div class="panel-title">🧾 سجل التشغيل</div></div>' +
+    '<div class="panel-body"><div class="wp-log" id="lcLog"></div></div></div>';
+  h += '</section>';
+  return h;
+};
+LC.syncControls = function () {
+  const g = function (id) { return document.getElementById(id); };
+  const n = function (id, d) { const e = g(id); return e && e.value !== '' ? +e.value : d; };
+  const c = LC.config;
+  c.baseYears = Math.max(2, Math.min(5, n('lcBase', c.baseYears)));
+  c.collapse = Math.max(.05, Math.min(.6, n('lcColl', c.collapse)));
+  c.persist = Math.max(1, Math.min(4, n('lcPers', c.persist)));
+  c.minTbp = Math.max(500, n('lcMin', c.minTbp));
+  c.radiusM = Math.max(500, Math.min(4000, n('lcR', c.radiusM)));
+  c.minFeddan = Math.max(0, n('lcMinFd', c.minFeddan));
+  c.gainTh = Math.max(2000, n('lcGain', c.gainTh));
+  if (g('lcNoRec')) c.requireNoRecovery = g('lcNoRec').value === '1';
+  c.anchorMonth = Math.max(1, Math.min(12, n('lcMonth', c.anchorMonth)));
+  c.window = Math.max(8, Math.min(60, n('lcWin', c.window)));
+  c.cloudMax = Math.max(5, Math.min(60, n('lcCloud', c.cloudMax)));
+  c.topN = Math.max(1, Math.min(120, n('lcTop', c.topN)));
+};
+LC.render = function () {
+  LC.renderMeta(); LC.renderKpi(); LC.renderFloor();
+  LC.renderDists(); LC.renderHots(); LC.drawChart(); LC.drawMap();
+};
+LC.renderMeta = function () {
+  const el = document.getElementById('lcMeta');
+  if (!el) return;
+  let s = LC.years.length ? (LC.mapset + ' · ' + LC.years[0] + '–' + LC.years[LC.years.length - 1] +
+    ' · ' + LC.years.length + ' سنة') : 'لم يُشغَّل المسح بعد';
+  if (LC.quality && LC.quality.pixels) s += ' · ' + LC.fmt(LC.quality.pixels) + ' بكسل داخل نطاق الخدمة';
+  if (LC.savedAt) s += ' · محفوظ ' + new Date(LC.savedAt).toLocaleDateString('ar-EG');
+  el.textContent = s;
+  const mdu = document.getElementById('lcMdu');
+  if (mdu && LC.pix && LC.pix.length) mdu.textContent = LC.num(LC.pix[0].a / LC.FEDDAN, 1);
+  const sc = document.getElementById('lcScenes');
+  if (sc && LC.scenes.before && LC.scenes.after)
+    sc.textContent = 'المقارنة: ' + LC.scenes.before.date + ' ← ' + LC.scenes.after.date;
+};
+LC.renderKpi = function () {
+  const box = document.getElementById('lcKpis');
+  if (!box) return;
+  const s = LC.stats;
+  if (!s || !Number.isFinite(s.lostFd)) { box.innerHTML = ''; return; }
+  const k = function (c, l, v, u, sub) {
+    return '<div class="wp-kpi ' + c + '"><span class="l">' + l + '</span><span class="v">' + v +
+      '<span class="u"> ' + (u || '') + '</span></span><span class="s">' + (sub || '') + '</span></div>';
+  };
+  let h = '';
+  h += k('r', 'الفقد التراكمى', LC.fmt(s.lostFd), 'فدان', LC.num(s.lostPct, 2) + '٪ من الزمام المنتج');
+  h += k('g', 'المكسب (استصلاح)', LC.fmt(s.gainFd), 'فدان', 'أرض دخلت الإنتاج وثبتت');
+  h += k(s.netFd < 0 ? 'r' : 'g', 'الصافى', (s.netFd >= 0 ? '+' : '−') + LC.fmt(Math.abs(s.netFd)), 'فدان',
+    s.netFd < 0 ? 'انكماش صافٍ للرقعة' : 'توسّع صافٍ للرقعة');
+  h += k('', 'الزمام المنتج المرصود', LC.fmt(s.agriFd), 'فدان', LC.fmt(LC.hotspots.length) + ' بؤرة مرشحة');
+  box.innerHTML = h;
+};
+LC.renderFloor = function () {
+  const box = document.getElementById('lcFloor');
+  if (!box) return;
+  const q = LC.quality;
+  if (!q || !Number.isFinite(q.floorPct)) { box.innerHTML = ''; return; }
+  const ratio = LC.stats.lostFd ? q.floorFd / LC.stats.lostFd * 100 : 0;
+  const good = q.floorPct < .5;
+  box.innerHTML = '<div class="panel"><div class="panel-body">' +
+    '<div class="wp-note ' + (good ? 'g' : 'w') + '"><b>أرضية الخطأ الذاتية:</b> ' +
+    'سنوات خط الأساس (' + (q.baseYears || []).join('، ') + ') تُظهر انهياراً فى <b>' +
+    LC.num(q.floorPct, 2) + '٪</b> من البكسلات — وهى سنوات لا يُفترض فيها فقد، ' +
+    'فهذه النسبة هى ضوضاء المنهج نفسه، أى ما يعادل ' + LC.fmt(q.floorFd) + ' فدان مقابل ' +
+    LC.fmt(LC.stats.lostFd) + ' فدان مرصودة (' + LC.num(ratio, 0) + '٪). ' +
+    (good ? 'الإشارة أكبر من الضوضاء بفارق مريح.' :
+      'الضوضاء مرتفعة — شدّد عتبة الانهيار أو زد سنوات الاستمرارية قبل الاعتماد على الأرقام.') +
+    '</div></div></div>';
+};
+LC.renderDists = function () {
+  const tb = document.getElementById('lcDistTbl');
+  if (!tb) return;
+  const pd = LC.stats.perDist;
+  if (!pd) return;
+  const ids = Object.keys(pd).sort(function (a, b) { return pd[b].lostFd - pd[a].lostFd; });
+  if (!ids.length) { tb.innerHTML = '<tr><td colspan="6"><div class="wp-empty">لا نتائج</div></td></tr>'; return; }
+  tb.innerHTML = ids.map(function (z) {
+    const x = pd[z], pct = x.agriFd ? x.lostFd / x.agriFd * 100 : 0;
+    const net = x.gainFd - x.lostFd;
+    const d = LC.dists().find(function (y) { return y.id === z; });
+    return '<tr><td><b style="color:' + (d ? d.c : '#666') + '">' + LC.esc(LC.distName(z)) + '</b></td>' +
+      '<td>' + LC.fmt(x.agriFd) + '</td>' +
+      '<td><b style="color:#c62828">' + LC.fmt(x.lostFd) + '</b></td>' +
+      '<td><span class="wp-tag ' + (pct > 2 ? 'wp-t-u' : pct > 1 ? 'wp-t-e' : 'wp-t-c') + '">' + LC.num(pct, 2) + '٪</span></td>' +
+      '<td style="color:#2e7d32">' + LC.fmt(x.gainFd) + '</td>' +
+      '<td><b>' + (net >= 0 ? '+' : '−') + LC.fmt(Math.abs(net)) + '</b></td></tr>';
+  }).join('');
+};
+LC.VCOL = { converted: '#c62828', partial: '#ef6c00', green: '#2e7d32', na: '#78909c', err: '#78909c' };
+LC.renderHots = function () {
+  const tb = document.getElementById('lcHotTbl');
+  if (!tb) return;
+  const f = LC.filter || 'all';
+  const rows = LC.hotspots.filter(function (h) {
+    return f === 'all' || (h.verify && h.verify.code === f);
+  }).slice(0, 300);
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="9"><div class="wp-empty">لا بؤر مطابقة</div></td></tr>'; return; }
+  tb.innerHTML = rows.map(function (h) {
+    const v = h.verify;
+    const url = 'https://earth.google.com/web/@' + h.la + ',' + h.lo + ',300a,1200d,35y,0h,0t,0r';
+    return '<tr><td style="font-family:var(--mono)">' + LC.esc(h.id) + '</td>' +
+      '<td>' + LC.esc(LC.distName(h.z)) + '</td>' +
+      '<td>' + (h.year || '—') + '</td>' +
+      '<td><b>' + LC.num(h.fd, 1) + '</b></td>' +
+      '<td>' + h.n + '</td>' +
+      '<td>' + (v ? '<span style="color:' + (LC.VCOL[v.code] || '#666') + ';font-weight:700">' + LC.esc(v.label) + '</span>' +
+        (v.why ? '<div class="wp-hint">' + LC.esc(v.why) + '</div>' : '') : '<span class="wp-tag wp-t-i">لم يُؤكَّد</span>') + '</td>' +
+      '<td>' + (v && Number.isFinite(v.confirmedFd) ? LC.num(v.confirmedFd, 1) : '—') + '</td>' +
+      '<td style="font-family:var(--mono);direction:ltr;font-size:.68rem">' + h.la.toFixed(4) + ', ' + h.lo.toFixed(4) + '</td>' +
+      '<td><a class="dr-btn outline" style="padding:3px 8px" href="' + url + '" target="_blank" rel="noopener">🌍</a></td></tr>';
+  }).join('');
+};
+LC.drawChart = function () {
+  const cv = document.getElementById('lcChart');
+  if (!cv || typeof Chart === 'undefined' || !LC.stats.perYear) return;
+  try { if (LC.charts.main) LC.charts.main.destroy(); } catch (e) { /* تجاهل */ }
+  const years = LC.years, py = LC.stats.perYear;
+  const nb = (LC.quality.baseYears || []).length;
+  LC.charts.main = new Chart(cv.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: years.map(String),
+      datasets: [
+        { label: 'فقد فدان', data: years.map(function (y) { return (py[y] || {}).lost || 0; }), backgroundColor: years.map(function (y, i) { return i < nb ? 'rgba(150,150,150,.45)' : 'rgba(198,40,40,.75)'; }) },
+        { label: 'مكسب فدان', data: years.map(function (y) { return (py[y] || {}).gain || 0; }), backgroundColor: 'rgba(46,125,50,.7)' }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { font: { family: 'Cairo' } } } },
+      scales: { y: { beginAtZero: true, title: { display: true, text: 'فدان' } } }
+    }
+  });
+};
+LC.drawMap = function () {
+  const cv = document.getElementById('lcMap');
+  if (!cv) return;
+  const b = LC.bounds();
+  if (!b) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = cv.clientWidth || 600, H = 330;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = '#f6f1e3'; g.fillRect(0, 0, W, H);
+  const sc = Math.min(W / (b.right - b.left), H / (b.top - b.bottom)) * .94;
+  const ox = (W - (b.right - b.left) * sc) / 2, oy = (H - (b.top - b.bottom) * sc) / 2;
+  const px = function (lo) { return ox + (lo - b.left) * sc; };
+  const py = function (la) { return H - oy - (la - b.bottom) * sc; };
+  g.strokeStyle = 'rgba(30,60,90,.3)'; g.lineWidth = 1;
+  LC.net().forEach(function (br) {
+    if (!br || !br.p || br.h === 'multi') return;
+    g.beginPath();
+    br.p.forEach(function (p, i) { const X = px(p[0]), Y = py(p[1]); if (i) g.lineTo(X, Y); else g.moveTo(X, Y); });
+    g.stroke();
+  });
+  const ys = LC.years.length ? LC.years : [];
+  const col = function (y) {
+    const i = ys.indexOf(+y);
+    const t = ys.length > 1 ? i / (ys.length - 1) : .5;
+    return 'rgb(' + Math.round(255 - 60 * t) + ',' + Math.round(200 - 170 * t) + ',' + Math.round(80 - 40 * t) + ')';
+  };
+  LC._hit = [];
+  LC.hotspots.forEach(function (h) {
+    const X = px(h.lo), Y = py(h.la);
+    const r = Math.max(2.5, Math.min(14, Math.sqrt(h.fd) * 1.6));
+    g.beginPath(); g.arc(X, Y, r, 0, Math.PI * 2);
+    g.fillStyle = h.verify && LC.VCOL[h.verify.code] ? LC.VCOL[h.verify.code] : col(h.year);
+    g.globalAlpha = .8; g.fill(); g.globalAlpha = 1;
+    LC._hit.push({ h: h, x: X, y: Y, r: r });
+  });
+  if (LC.picked) {
+    const p = LC._hit.find(function (x) { return x.h.id === LC.picked; });
+    if (p) { g.strokeStyle = '#0e3b5c'; g.lineWidth = 2; g.beginPath(); g.arc(p.x, p.y, p.r + 3, 0, Math.PI * 2); g.stroke(); }
+  }
+  const lg = document.getElementById('lcLgd');
+  if (lg) {
+    const sw = function (c, t) { return '<div class="wp-lg"><span class="wp-sw" style="background:' + c + '"></span>' + t + '</div>'; };
+    lg.innerHTML = (LC.verified ? sw(LC.VCOL.converted, 'تحوّل مؤكَّد') + sw(LC.VCOL.partial, 'جزئى') +
+      sw(LC.VCOL.green, 'إيجابى كاذب') : '') +
+      (ys.length ? sw(col(ys[Math.floor(ys.length / 2)]), 'غير مؤكَّد — اللون بسنة الفقد') : '');
+  }
+};
+LC.bindMap = function () {
+  const cv = document.getElementById('lcMap');
+  if (!cv || cv._lcBound) return;
+  cv._lcBound = true;
+  cv.addEventListener('click', function (e) {
+    if (!LC._hit || !LC._hit.length) return;
+    const r = cv.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    let best = null, bd = 1e9;
+    LC._hit.forEach(function (p) {
+      const d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
+      if (d < bd) { bd = d; best = p; }
+    });
+    if (!best || bd > 900) return;
+    LC.picked = best.h.id;
+    LC.renderPick(best.h);
+    LC.drawMap();
+  });
+};
+LC.renderPick = function (h) {
+  const box = document.getElementById('lcPick');
+  if (!box) return;
+  const v = h.verify;
+  box.className = 'wp-note ' + (v && (v.code === 'built' || v.code === 'strip') ? 'r' : v && v.code === 'green' ? 'g' : 'w');
+  let s = '<b>' + LC.esc(h.id) + ' · ' + LC.esc(LC.distName(h.z)) + '</b> — ' +
+    LC.num(h.fd, 1) + ' فدان فى ' + h.n + ' بكسل · سنة الفقد ' + (h.year || '—');
+  if (v && v.code !== 'err') {
+    s += '<br><b>التأكيد بدقة 10 م:</b> <span style="color:' + (LC.VCOL[v.code] || '#666') + ';font-weight:700">' +
+      LC.esc(v.label) + '</span> — كانت مزروعة ' + v.wasVeg + ' بكسل · تحوّلت ' + v.conv +
+      ' · ما زال أخضر ' + v.green + ' · وسطى ' + v.mid +
+      '<br>ترجيح النوع: ' + v.builtLike + ' بكسل بصمة مبانٍ مقابل ' + v.bareLike + ' بصمة أرض جرداء ' +
+      '<span class="wp-hint">(NDBI لا يفصل الخرسانة عن التربة العارية فصلاً قاطعاً — ترجيح لا تقرير)</span>' +
+      '<br>المساحة المؤكَّدة تحوّلاً: <b>' + LC.num(v.confirmedFd, 2) + ' فدان</b> (' +
+      LC.num(v.changedPct, 0) + '٪ مما كان مزروعاً) · المقارنة ' + LC.esc(v.before) + ' ← ' + LC.esc(v.after);
+  } else if (v && v.why) {
+    s += '<br>تعذّر التأكيد: ' + LC.esc(v.why);
+  } else {
+    s += '<br>لم تُؤكَّد بعد — شغّل المرحلة الثانية.';
+  }
+  s += '<br><a href="https://earth.google.com/web/@' + h.la + ',' + h.lo +
+    ',300a,1200d,35y,0h,0t,0r" target="_blank" rel="noopener">🌍 فتح البؤرة على جوجل إيرث</a>';
+  box.innerHTML = s;
+};
+LC.exportCsv = function () {
+  if (!LC.hotspots.length) { LC.log('لا بؤر للتصدير.', 'w'); return; }
+  const head = ['id', 'district', 'loss_year', 'feddan', 'pixels', 'lat', 'lon',
+    'verify', 'confirmed_feddan', 'was_vegetated_px', 'converted_px', 'built_like_px', 'bare_like_px', 'before', 'after'];
+  const lines = [head.join(',')];
+  LC.hotspots.forEach(function (h) {
+    const v = h.verify || {};
+    lines.push([h.id, LC.distName(h.z), h.year || '', LC.num(h.fd, 2), h.n,
+      h.la.toFixed(5), h.lo.toFixed(5), v.label || '', Number.isFinite(v.confirmedFd) ? LC.num(v.confirmedFd, 2) : '',
+      v.wasVeg == null ? '' : v.wasVeg, v.conv == null ? '' : v.conv,
+      v.builtLike == null ? '' : v.builtLike, v.bareLike == null ? '' : v.bareLike,
+      v.before || '', v.after || '']
+      .map(function (x) { return '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"'; }).join(','));
+  });
+  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'giza-land-loss-' + (LC.years[0] || '') + '-' + (LC.years[LC.years.length - 1] || '') + '.csv';
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 1500);
+  LC.log('صُدّرت ' + LC.hotspots.length + ' بؤرة.', 's');
+};
+LC.after = function () {
+  LC.bindMap();
+  ['lcBase', 'lcColl', 'lcPers', 'lcMin', 'lcR', 'lcMinFd', 'lcNoRec', 'lcGain'].forEach(function (id) {
+    const e = document.getElementById(id);
+    if (e) e.addEventListener('change', function () {
+      LC.syncControls();
+      if (LC.vals && LC.pix.length) { LC.analyse(); LC.cluster(); LC.render(); LC.save(); }
+    });
+  });
+  ['lcMonth', 'lcWin', 'lcCloud', 'lcTop'].forEach(function (id) {
+    const e = document.getElementById(id);
+    if (e) e.addEventListener('change', function () { LC.syncControls(); LC.save(); });
+  });
+  document.querySelectorAll('[data-lcflt]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      LC.filter = b.getAttribute('data-lcflt');
+      document.querySelectorAll('[data-lcflt]').forEach(function (o) { o.classList.toggle('on', o === b); });
+      LC.renderHots();
+    });
+  });
+  if (!LC.done) LC.setStatus('جاهز — اضغط «مسح كل السنوات»', '');
+  else LC.setStatus('نتائج محفوظة · ' + LC.hotspots.length + ' بؤرة', 'ok');
+  LC.render();
+};
+LC.mount = function () {
+  const root = document.getElementById('lcRoot');
+  if (!root) return;
+  if (!LC.done) LC.load();
+  root.innerHTML = LC.viewHtml();
+  LC.after();
+};
+window.LC = LC;
+
+/* ── ربط التبويب العاشر ── */
+(function(){
+  var prev = switchTab;
+  switchTab = function(i){
+    prev(i);
+    if (i === 10 && window.LC) requestAnimationFrame(function(){ LC.mount(); });
   };
 })();
 </script>

@@ -1,12 +1,12 @@
 /* ══════════════════════════════════════════
    Service Worker — ري الجيزة PWA
-   v33 — تبويب الإنذار المبكر: تنبؤ ETo لكل هندسة + Kc معايَر من WaPOR
+   v34 — تبويب فقد الرقعة الزراعية: مسح 8 سنوات إنتاج حيوى + تأكيد 10 م
    تاريخ: 2026-07-30
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v33';
-const STATIC_CACHE = 'static-v33';
-const DATA_CACHE   = 'data-v33';
+const CACHE_NAME   = 'ري-الجيزة-v34';
+const STATIC_CACHE = 'static-v34';
+const DATA_CACHE   = 'data-v34';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [
