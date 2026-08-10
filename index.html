@@ -153,7 +153,8 @@ select{background:var(--card);border:1px solid var(--border2);color:var(--text);
 .ann-hdr-t{font-size:11px;font-weight:900;color:var(--navy);}
 .ann-hdr-sub{font-size:9px;color:var(--text3);}
 .ann-body{padding:10px 14px 12px;display:flex;flex-direction:column;gap:10px;}
-.ann-yrs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.ann-yrs{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;}
+.ann-foot{font-size:9px;color:var(--text3);line-height:1.6;margin-top:6px;}
 .ann-yr{border-radius:9px;padding:8px 10px;text-align:center;border:1px solid;}
 .ann-yr.y24{background:#f5f7f8;border-color:#cfd8dc;}
 .ann-yr.y25{background:#e8f0fb;border-color:#b3c8ef;}
@@ -217,7 +218,7 @@ select{background:var(--card);border:1px solid var(--border2);color:var(--text);
 .mc{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);}
 .mc-hdr{padding:7px 12px;background:linear-gradient(to left,var(--bg2),var(--card));border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:900;color:var(--navy);}
 .mc-body{padding:8px 12px 10px;}
-.mc-yrs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:6px;}
+.mc-yrs{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:6px;}
 .mc-yr{border-radius:7px;padding:6px 7px;text-align:center;border:1px solid;}
 .mc-yr.y24{background:#f5f7f8;border-color:#cfd8dc;}
 .mc-yr.y25{background:#e8f0fb;border-color:#b3c8ef;}
@@ -1029,7 +1030,7 @@ footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-to
   </div>
 </div>
 
-<footer>لوحة ري الجيزة — الإدارة العامة للموارد المائية والري بالجيزة © 2026 &nbsp;·&nbsp; <span id="buildTag">build 35.0</span></footer>
+<footer>لوحة ري الجيزة — الإدارة العامة للموارد المائية والري بالجيزة © 2026 &nbsp;·&nbsp; <span id="buildTag">build 36.0</span></footer>
 
 <script>
 /* ══════════ CONFIG ══════════ */
@@ -1071,10 +1072,13 @@ const FEEDERS = [
 const MONTHS=['','يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 const PREV=2025, CURR=2026;
 const YC={2024:'#78909c',2025:'#1565c0',2026:'#00796b'};
+// سنوات العرض — 2024 مؤرشفة (62 يوماً فقط: 31/10 → 31/12) فلا تُقارن بسنة كاملة
+const YRS=[2025,2026];
+const YRS_ARCHIVED=[2024];
 
 /* ══════════ DB ══════════ */
 const DB={lookup:{},series:{},monthly_avgs:{}};
-const BUILD='35.0';
+const BUILD='36.0';
 
 /* ══════════════════════════════════════════════════════════════════
    سجل تصرفات المغذيات المضمّن — المصدر: ملف «تصرف المغذيات» الرسمى
@@ -1175,16 +1179,18 @@ function fhScan(){
 }
 
 function fhCoverage(){
-  let days=0, zero=0;
+  let days=0, zero=0, arch=0, from=null, to=null;
   Object.keys(DB.lookup).forEach(function(key){
     Object.keys(DB.lookup[key]).forEach(function(y){
       const rec=DB.lookup[key][y];
       if(!rec||!rec.flows||rec.flows['__total__']===null||rec.flows['__total__']===undefined) return;
+      if(YRS.indexOf(+y)<0){ arch++; return; }
       days++;
       if(rec.flows['__total__']===0) zero++;
+      if(rec.date){ if(!from||rec.date<from) from=rec.date; if(!to||rec.date>to) to=rec.date; }
     });
   });
-  return {days:days, zero:zero};
+  return {days:days, zero:zero, arch:arch, from:from, to:to};
 }
 
 function fhToggleDetail(){
@@ -1226,10 +1232,12 @@ function renderFhQuality(){
   const cov=fhCoverage();
   const scan=fhScan();
   let chips='';
-  chips+='<span class="fh-chip"><b>'+cov.days+'</b> يوم مُحمَّل</span>';
-  chips+='<span class="fh-chip">'+FH_FROM+' ← '+FH_TO+'</span>';
+  chips+='<span class="fh-chip"><b>'+cov.days+'</b> يوم معروض</span>';
+  chips+='<span class="fh-chip">'+(cov.from||FH_FROM)+' ← '+(cov.to||FH_TO)+'</span>';
+  if(cov.arch) chips+='<span class="fh-chip">مؤرشف خارج العرض: <b>'+cov.arch+'</b> يوم ('+YRS_ARCHIVED.join('،')+')</span>';
   chips+='<span class="fh-chip">صفر تصرف: <b>'+cov.zero+'</b> يوم</span>';
-  if(FH_GAPS.length) chips+='<span class="fh-chip warn">فجوة: '+FH_GAPS.join(' ، ')+'</span>';
+  const gaps=FH_GAPS.filter(function(g){ return YRS.indexOf(+g.slice(0,4))>=0; });
+  if(gaps.length) chips+='<span class="fh-chip warn">فجوة: '+gaps.join(' ، ')+'</span>';
   chips+='<span class="fh-chip'+(scan.length?' warn':'')+'" onclick="fhToggleDetail()" style="cursor:pointer">قيود مميّزة: <b>'+scan.length+'</b> يوم ▾</span>';
 
   let today='';
@@ -2353,7 +2361,7 @@ function renderAnnualAvg(){
   if(!el) return;
 
   // حساب المتوسط اليومي لكل سنة من series
-  const yrs=[2024,2025,2026];
+  const yrs=YRS;
   const stats={};
   yrs.forEach(y=>{
     const arr=DB.series[y]?.flows?.['__total__']||[];
@@ -2366,19 +2374,21 @@ function renderAnnualAvg(){
     };
   });
 
-  const a24=stats[2024].avg, a25=stats[2025].avg, a26=stats[2026].avg;
+  const a25=stats[2025].avg, a26=stats[2026].avg;
 
-  // فروق
+  // فروق — المدى الكامل لكل سنة
   const d26_25 = (a26!=null&&a25!=null) ? a26-a25 : null;
-  const d26_24 = (a26!=null&&a24!=null) ? a26-a24 : null;
   const pct26_25 = (d26_25!=null&&a25) ? (d26_25/a25*100) : null;
-  const pct26_24 = (d26_24!=null&&a24) ? (d26_24/a24*100) : null;
+
+  // فرق على نفس المدى الزمنى — 2025 مقصورة على الأيام الموجودة فى 2026
+  const same = sameSpanAvg();
+  const d_same = (same.cur!=null&&same.prev!=null) ? same.cur-same.prev : null;
+  const pct_same = (d_same!=null&&same.prev) ? (d_same/same.prev*100) : null;
 
   // أعلى قيمة للرسم البياني
-  const maxAvg = Math.max(a24||0, a25||0, a26||0, 0.001);
+  const maxAvg = Math.max(a25||0, a26||0, 0.001);
 
-  const clrMap={2024:'#78909c',2025:'#1565c0',2026:'#00796b'};
-  const bgMap={2024:'#f5f7f8',2025:'#e8f0fb',2026:'#e6f4f1'};
+  const clrMap=YC;
 
   // بار لكل سنة
   const barsHTML = yrs.map(y=>{
@@ -2401,11 +2411,11 @@ function renderAnnualAvg(){
     +'</div>'
     +'<div class="ann-body">'
 
-    // بطاقات السنوات الثلاث
+    // بطاقات سنوات العرض
     +'<div class="ann-yrs">'
     +yrs.map(y=>{
       const s=stats[y];
-      return '<div class="ann-yr y'+y+'">'
+      return '<div class="ann-yr y'+String(y).slice(2)+'">'
         +'<div class="ann-yr-lbl">'+y+'</div>'
         +'<div class="ann-yr-val">'+(s.avg!=null?s.avg.toFixed(4):'—')+'</div>'
         +'<div class="ann-yr-u">م.م³/يوم</div>'
@@ -2428,13 +2438,32 @@ function renderAnnualAvg(){
     +'<div class="ann-d-pct '+dcls(pct26_25)+'">'+pSign(pct26_25)+'</div>'
     +'</div>'
     +'<div class="ann-d">'
-    +'<div class="ann-d-lbl">Δ 2026 − 2024</div>'
-    +'<div class="ann-d-val '+dcls(d26_24)+'">'+dSign(d26_24)+'</div>'
-    +'<div class="ann-d-pct '+dcls(pct26_24)+'">'+pSign(pct26_24)+'</div>'
+    +'<div class="ann-d-lbl">Δ نفس المدى ('+same.days+' يوم)</div>'
+    +'<div class="ann-d-val '+dcls(d_same)+'">'+dSign(d_same)+'</div>'
+    +'<div class="ann-d-pct '+dcls(pct_same)+'">'+pSign(pct_same)+'</div>'
     +'</div>'
     +'</div>'
 
-    +'</div></div>';
+    +'</div>'
+    +'<div class="ann-foot">مقارنة المدى الكامل تقارن سنة كاملة بسنة جارية، فتخفى الفارق الحقيقى. '
+    +'«Δ نفس المدى» تقصر '+PREV+' على الأيام الموجودة فعلاً فى '+CURR+' — وهى المقارنة المعتمدة.</div>'
+    +'</div>';
+}
+
+/* متوسط مجموع التصرفات على نفس المدى الزمنى للسنتين */
+function sameSpanAvg(){
+  const keys=Object.keys(DB.lookup);
+  let sc=0,nc=0,sp=0,np=0;
+  for(let i=0;i<keys.length;i++){
+    const yrs=DB.lookup[keys[i]];
+    const rc=yrs[String(CURR)], rp=yrs[String(PREV)];
+    const vc=rc&&rc.flows?rc.flows['__total__']:null;
+    const vp=rp&&rp.flows?rp.flows['__total__']:null;
+    if(vc===null||vc===undefined) continue;
+    if(vp===null||vp===undefined) continue;
+    sc+=vc; nc++; sp+=vp; np++;
+  }
+  return {cur:nc?sc/nc:null, prev:np?sp/np:null, days:nc};
 }
 
 /* ══════════ RENDER FLOWS ══════════ */
@@ -2492,7 +2521,7 @@ function renderFlows(){
     ]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:400},plugins:{legend:{position:'top',labels:{color:'#456070',font:{size:9,family:'Cairo'},boxWidth:8,padding:5}}},scales:{x:{ticks:{color:'#7a96a8',font:{size:8}},grid:{color:'rgba(0,0,0,.04)'}},y:{ticks:{color:'#7a96a8',font:{size:8}},grid:{color:'rgba(0,0,0,.04)'}}}}});
     const ctx2=document.getElementById('fcLine')?.getContext('2d');
     if(ctx2){
-      const ds=[2024,2025,2026].map(y=>({label:String(y),data:(DB.series[y]?.flows?.['__total__']||[]).map(p=>({x:p.date.slice(5),y:p.val})),borderColor:YC[y],backgroundColor:'transparent',borderWidth:y===2024?1:1.5,borderDash:y===2024?[4,3]:[],pointRadius:0,tension:0.3,parsing:{xAxisKey:'x',yAxisKey:'y'}}));
+      const ds=YRS.map(y=>({label:String(y),data:(DB.series[y]?.flows?.['__total__']||[]).map(p=>({x:p.date.slice(5),y:p.val})),borderColor:YC[y],backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,tension:0.3,parsing:{xAxisKey:'x',yAxisKey:'y'}}));
       flCH['line']=new Chart(ctx2,{type:'line',data:{datasets:ds},options:{responsive:true,maintainAspectRatio:false,animation:{duration:400},plugins:{legend:{position:'top',labels:{color:'#456070',font:{size:9,family:'Cairo'},boxWidth:8,padding:5}}},scales:{x:{type:'category',ticks:{color:'#7a96a8',font:{size:8},callback:function(v,i){return i%20===0?this.getLabelForValue(v):''}},grid:{color:'rgba(0,0,0,.04)'}},y:{ticks:{color:'#7a96a8',font:{size:8}},grid:{color:'rgba(0,0,0,.04)'}}}}})}
   },50);
 }
@@ -2505,15 +2534,15 @@ function renderMonthlyAvg(){
   const valKey=document.getElementById('mavgVal').value;
   const isFlow=type==='flows';
   const mName=MONTHS[+mKey];
-  const yrs=[2024,2025,2026];
+  const yrs=YRS;
   const items=isFlow?FEEDERS.map(f=>f.name):STATIONS.map(s=>s.name);
   const digits=isFlow?4:2;
   document.getElementById('mavgVal').style.display=isFlow?'none':'';
   document.getElementById('mavgValLbl').style.display=isFlow?'none':'';
-  document.getElementById('mavgTitle').textContent=`📊 متوسط ${mName} — ${isFlow?'التصرفات':{'f':'أمام','b':'خلف','d':'فارق'}[valKey]} — 2024/2025/2026`;
+  document.getElementById('mavgTitle').textContent=`📊 متوسط ${mName} — ${isFlow?'التصرفات':{'f':'أمام','b':'خلف','d':'فارق'}[valKey]} — ${YRS.join('/')}`;
   if(mavgCH){mavgCH.destroy();mavgCH=null;}
   const datasets=yrs.map(y=>{
-    const clr={'2024':'120,144,156','2025':'21,101,192','2026':'0,121,107'};
+    const clr={'2025':'21,101,192','2026':'0,121,107'};
     return{label:String(y),data:items.map(it=>{const k=isFlow?it:it+'_'+valKey;return DB.monthly_avgs[String(y)]?.[mKey]?.[k]??null;}),backgroundColor:`rgba(${clr[y]},.45)`,borderColor:YC[y],borderWidth:1.5,borderRadius:4};
   });
   setTimeout(()=>{
@@ -2527,7 +2556,7 @@ function renderMonthlyAvg(){
     const k=isFlow?item:item+'_'+valKey;
     const vals={};yrs.forEach(y=>{vals[y]=DB.monthly_avgs[String(y)]?.[mKey]?.[k]??null;});
     const d26_25=(vals[2026]!=null&&vals[2025]!=null)?vals[2026]-vals[2025]:null;
-    const d26_24=(vals[2026]!=null&&vals[2024]!=null)?vals[2026]-vals[2024]:null;
+    const pct26_25=(d26_25!=null&&vals[2025])?(d26_25/vals[2025]*100):null;
     const cid='mc_'+idx;
     const card=document.createElement('div');card.className='mc';
     card.innerHTML=`
@@ -2537,13 +2566,12 @@ function renderMonthlyAvg(){
     </div>
     <div class="mc-body">
       <div class="mc-yrs">
-        <div class="mc-yr y24"><div class="mc-yr-lbl">2024</div><div class="mc-yr-val">${vals[2024]!=null?vals[2024].toFixed(digits):'—'}</div><div class="mc-yr-u">${isFlow?'م.م³':'م'}</div></div>
         <div class="mc-yr y25"><div class="mc-yr-lbl">2025</div><div class="mc-yr-val">${vals[2025]!=null?vals[2025].toFixed(digits):'—'}</div><div class="mc-yr-u">${isFlow?'م.م³':'م'}</div></div>
         <div class="mc-yr y26"><div class="mc-yr-lbl">2026</div><div class="mc-yr-val">${vals[2026]!=null?vals[2026].toFixed(digits):'—'}</div><div class="mc-yr-u">${isFlow?'م.م³':'م'}</div></div>
       </div>
       <div class="mc-deltas">
         <div class="mc-d"><div class="mc-d-lbl">Δ 2026−2025</div><div class="mc-d-val ${dcls(d26_25)}">${dsign(d26_25,digits)}</div></div>
-        <div class="mc-d"><div class="mc-d-lbl">Δ 2026−2024</div><div class="mc-d-val ${dcls(d26_24)}">${dsign(d26_24,digits)}</div></div>
+        <div class="mc-d"><div class="mc-d-lbl">نسبة التغيّر</div><div class="mc-d-val ${dcls(pct26_25)}">${pct26_25!=null?(pct26_25>0?'+':'')+pct26_25.toFixed(1)+'%':'—'}</div></div>
       </div>
       <div class="mc-spark"><canvas id="${cid}"></canvas></div>
     </div>`;
@@ -2553,7 +2581,7 @@ function renderMonthlyAvg(){
       if(!ctx2) return;
       const moLabels=['ي','ف','م','أ','م','ي','ي','أ','س','أ','ن','د'];
       const months=['01','02','03','04','05','06','07','08','09','10','11','12'];
-      miniCH[cid]=new Chart(ctx2,{type:'line',data:{labels:moLabels,datasets:yrs.map(y=>({label:String(y),data:months.map(m=>DB.monthly_avgs[String(y)]?.[m]?.[k]??null),borderColor:YC[y],backgroundColor:'transparent',borderWidth:y===2024?1:1.5,borderDash:y===2024?[3,2]:[],pointRadius:1,tension:0.3,spanGaps:true}))},options:{responsive:true,maintainAspectRatio:false,animation:{duration:200},plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#7a96a8',font:{size:7}},grid:{display:false}},y:{ticks:{color:'#7a96a8',font:{size:7},callback:v=>v.toFixed(1)},grid:{color:'rgba(0,0,0,.04)'}}}}});
+      miniCH[cid]=new Chart(ctx2,{type:'line',data:{labels:moLabels,datasets:yrs.map(y=>({label:String(y),data:months.map(m=>DB.monthly_avgs[String(y)]?.[m]?.[k]??null),borderColor:YC[y],backgroundColor:'transparent',borderWidth:1.5,pointRadius:1,tension:0.3,spanGaps:true}))},options:{responsive:true,maintainAspectRatio:false,animation:{duration:200},plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#7a96a8',font:{size:7}},grid:{display:false}},y:{ticks:{color:'#7a96a8',font:{size:7},callback:v=>v.toFixed(1)},grid:{color:'rgba(0,0,0,.04)'}}}}});
     },40+idx*3);
   });
 }
@@ -2577,13 +2605,13 @@ function renderTrend(){
   const isFlow=type==='flows';
   if(!item) return;
   const lbl={f:'أمام',b:'خلف',d:'فارق'};
-  document.getElementById('trendTitle').textContent=`📈 ${item}${!isFlow?' — '+lbl[valKey]:''} — 2024/2025/2026`;
+  document.getElementById('trendTitle').textContent=`📈 ${item}${!isFlow?' — '+lbl[valKey]:''} — ${YRS.join('/')}`;
   const ctx=document.getElementById('cTrend').getContext('2d');
   if(tCH) tCH.destroy();
-  const datasets=[2024,2025,2026].map(y=>{
+  const datasets=YRS.map(y=>{
     const arr=isFlow?(DB.series[y]?.flows?.[item]||[]):(DB.series[y]?.stations?.[item]||[]);
     const data=isFlow?arr.map(p=>({x:p.date.slice(5),y:p.val})):arr.map(p=>({x:p.date.slice(5),y:p[valKey]}));
-    return{label:String(y),data,borderColor:YC[y],backgroundColor:'transparent',borderWidth:y===2024?1:1.5,borderDash:y===2024?[4,3]:[],pointRadius:0,tension:0.3,parsing:{xAxisKey:'x',yAxisKey:'y'}};
+    return{label:String(y),data,borderColor:YC[y],backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,tension:0.3,parsing:{xAxisKey:'x',yAxisKey:'y'}};
   });
   tCH=new Chart(ctx,{type:'line',data:{datasets},options:{responsive:true,maintainAspectRatio:false,animation:{duration:400},plugins:{legend:{position:'top',labels:{color:'#456070',font:{size:10,family:'Cairo'},boxWidth:8,padding:8}},tooltip:{callbacks:{title:i=>`📅 ${i[0].raw.x}`,label:i=>`${i.dataset.label}: ${i.raw.y!=null?i.raw.y.toFixed(isFlow?4:2):'—'}`}}},scales:{x:{type:'category',ticks:{color:'#7a96a8',font:{size:8},callback:function(v,i){return i%15===0?this.getLabelForValue(v):''}},grid:{color:'rgba(0,0,0,.05)'}},y:{ticks:{color:'#7a96a8',font:{size:8}},grid:{color:'rgba(0,0,0,.05)'}}}}});
 }
@@ -3274,7 +3302,7 @@ rebuildDerived();
 initTrendItems();
 calcShift();
 goToday();
-(function(){var _b=document.getElementById('buildTag'); if(_b) _b.textContent='build '+BUILD+' · sw v35';})();
+(function(){var _b=document.getElementById('buildTag'); if(_b) _b.textContent='build '+BUILD+' · sw v36';})();
 window.addEventListener('load',()=>{
   if(isLocalFile()){
     const st=document.getElementById('impStatus');

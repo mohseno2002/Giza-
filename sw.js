@@ -1,12 +1,12 @@
 /* ══════════════════════════════════════════
    Service Worker — ري الجيزة PWA
-   v35 — سجل تصرفات المغذيات المضمّن (647 يوماً) + تصحيح معادلة التصرف
+   v36 — استبعاد 2024 من العرض + مقارنة نفس المدى الزمنى
    تاريخ: 2026-08-10
 ══════════════════════════════════════════ */
 
-const CACHE_NAME   = 'ري-الجيزة-v35';
-const STATIC_CACHE = 'static-v35';
-const DATA_CACHE   = 'data-v35';
+const CACHE_NAME   = 'ري-الجيزة-v36';
+const STATIC_CACHE = 'static-v36';
+const DATA_CACHE   = 'data-v36';
 
 // الأصول الثابتة — تتخزن عند التنصيب
 const STATIC_ASSETS = [
