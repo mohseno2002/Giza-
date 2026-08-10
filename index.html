@@ -1030,7 +1030,7 @@ footer{text-align:center;padding:10px;color:var(--text3);font-size:9px;border-to
   </div>
 </div>
 
-<footer>لوحة ري الجيزة — الإدارة العامة للموارد المائية والري بالجيزة © 2026 &nbsp;·&nbsp; <span id="buildTag">build 36.0</span></footer>
+<footer>لوحة ري الجيزة — الإدارة العامة للموارد المائية والري بالجيزة © 2026 &nbsp;·&nbsp; <span id="buildTag">build 38.0</span></footer>
 
 <script>
 /* ══════════ CONFIG ══════════ */
@@ -1078,7 +1078,7 @@ const YRS_ARCHIVED=[2024];
 
 /* ══════════ DB ══════════ */
 const DB={lookup:{},series:{},monthly_avgs:{}};
-const BUILD='36.0';
+const BUILD='38.0';
 
 /* ══════════════════════════════════════════════════════════════════
    سجل تصرفات المغذيات المضمّن — المصدر: ملف «تصرف المغذيات» الرسمى
@@ -1141,6 +1141,7 @@ function seedFeederHistory(){
     base.flows=fhFlowsFromRaw(FH_D[dt]);
     base.fhRaw=FH_D[dt];
     base.flowsSrc='file';
+    base.carryFrom=null; base.carryAge=null;
     DB.lookup[key][y]=base;
     n++;
   }
@@ -1179,18 +1180,19 @@ function fhScan(){
 }
 
 function fhCoverage(){
-  let days=0, zero=0, arch=0, from=null, to=null;
+  let days=0, zero=0, arch=0, carry=0, from=null, to=null;
   Object.keys(DB.lookup).forEach(function(key){
     Object.keys(DB.lookup[key]).forEach(function(y){
       const rec=DB.lookup[key][y];
       if(!rec||!rec.flows||rec.flows['__total__']===null||rec.flows['__total__']===undefined) return;
       if(YRS.indexOf(+y)<0){ arch++; return; }
+      if(rec.flowsSrc==='carry') carry++;
       days++;
       if(rec.flows['__total__']===0) zero++;
       if(rec.date){ if(!from||rec.date<from) from=rec.date; if(!to||rec.date>to) to=rec.date; }
     });
   });
-  return {days:days, zero:zero, arch:arch, from:from, to:to};
+  return {days:days, zero:zero, arch:arch, carry:carry, from:from, to:to};
 }
 
 function fhToggleDetail(){
@@ -1225,6 +1227,103 @@ function fhRenderDetail(){
   d.innerHTML=h;
 }
 
+
+/* ══════════════════════════════════════════════════════════════════
+   ترحيل اليوم السابق عند غياب إدخال التصرفات
+   ------------------------------------------------------------------
+   قرار تشغيلى: اليوم الذى لم تُدخل فيه تصرفات المغذيات يُعتبر مثل اليوم
+   السابق لحين إدخال القراءة الفعلية.
+   • يُطبَّق على الأيام الغائبة تماماً من السجل فقط.
+   • اليوم المسجَّل بصفر قراءةٌ حقيقية (سدة / غلق مجرى) ولا يُرحَّل عليه.
+   • القيمة المُرحَّلة تُعامَل معاملة القراءة الفعلية فى كل شىء: الكروت
+     والسلاسل والمتوسطات ومقارنة نفس المدى وخط الإمداد فى تبويب التنبؤ.
+   • مصدرها يبقى مسجَّلاً فى flowsSrc/carryFrom لأغراض التدقيق فقط.
+   • تُلغى تلقائياً لحظة وصول القراءة الفعلية من الشيت.
+   ══════════════════════════════════════════════════════════════════ */
+const CARRY_ON = true;
+const CARRY_STATE = {days:0, list:[]};
+
+function fhToday(){
+  const d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function fhAddDays(dt,n){
+  const p=dt.split('-');
+  const d=new Date(+p[0],+p[1]-1,+p[2]);
+  d.setDate(d.getDate()+n);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function fhDaysBetween(a,b){
+  const pa=a.split('-'), pb=b.split('-');
+  return Math.round((Date.UTC(+pb[0],+pb[1]-1,+pb[2])-Date.UTC(+pa[0],+pa[1]-1,+pa[2]))/864e5);
+}
+/* أى تصرفات متاحة لليوم — فعلية أو مُرحَّلة (كلاهما يُعامَل معاملة القراءة) */
+function fhAnyFlows(rec){
+  if(!rec||!rec.flows) return false;
+  const t=rec.flows['__total__'];
+  return t!==null&&t!==undefined;
+}
+
+/* قراءة فعلية فقط — تُستخدم داخلياً لتحديد مصدر الترحيل لا للعرض */
+function fhHasFlows(rec){
+  if(!rec||!rec.flows) return false;
+  if(rec.flowsSrc==='carry') return false;
+  const t=rec.flows['__total__'];
+  return t!==null&&t!==undefined;
+}
+
+function applyCarryForward(){
+  // (1) إزالة كل ما رُحِّل فى الجولة السابقة — القراءة الفعلية دائماً أولى
+  for(let i=0;i<CARRY_STATE.list.length;i++){
+    const dt=CARRY_STATE.list[i];
+    const rec=DB.lookup[dt.slice(5)]&&DB.lookup[dt.slice(5)][dt.slice(0,4)];
+    if(rec&&rec.flowsSrc==='carry'){
+      delete rec.flows; delete rec.flowsSrc; delete rec.carryFrom; delete rec.carryAge;
+    }
+  }
+  CARRY_STATE.list=[]; CARRY_STATE.days=0;
+  if(!CARRY_ON) return 0;
+
+  // (2) أول يوم فيه قراءة فعلية داخل سنوات العرض
+  let first=null;
+  Object.keys(DB.lookup).forEach(function(key){
+    Object.keys(DB.lookup[key]).forEach(function(y){
+      const rec=DB.lookup[key][y];
+      if(YRS.indexOf(+y)<0||!fhHasFlows(rec)||!rec.date) return;
+      if(!first||rec.date<first) first=rec.date;
+    });
+  });
+  if(!first) return 0;
+
+  // (3) المشى يوماً بيوم حتى تاريخ اليوم
+  const last=fhToday();
+  let srcDate=null, srcFlows=null;
+  let dt=first, guard=0;
+  while(fhDaysBetween(dt,last)>=0&&guard<5000){
+    guard++;
+    const y=dt.slice(0,4), key=dt.slice(5);
+    if(YRS.indexOf(+y)>=0){
+      if(!DB.lookup[key]) DB.lookup[key]={};
+      const rec=DB.lookup[key][y];
+      if(fhHasFlows(rec)){
+        srcDate=dt; srcFlows=rec.flows;
+      }else if(srcFlows){
+        const base=rec||{stations:{},nile:null,pump:null};
+        base.date=dt;
+        base.flows=Object.assign({},srcFlows);
+        base.flowsSrc='carry';
+        base.carryFrom=srcDate;
+        base.carryAge=fhDaysBetween(srcDate,dt);
+        DB.lookup[key][y]=base;
+        CARRY_STATE.list.push(dt);
+      }
+    }
+    dt=fhAddDays(dt,1);
+  }
+  CARRY_STATE.days=CARRY_STATE.list.length;
+  return CARRY_STATE.days;
+}
+
 function renderFhQuality(){
   const el=document.getElementById('fhQuality');
   if(!el) return;
@@ -1244,7 +1343,7 @@ function renderFhQuality(){
   [PREV,CURR].forEach(function(y){
     const rec=DB.lookup[key]&&DB.lookup[key][String(y)];
     if(!rec||!rec.flows) return;
-    const src=rec.flowsSrc==='sheet'?'من Google Sheets':(rec.flowsSrc==='file'?'من الملف الرسمى':'—');
+    const src=rec.flowsSrc==='sheet'?'من Google Sheets':(rec.flowsSrc==='file'?'من الملف الرسمى':(rec.flowsSrc==='carry'?'منقول عن '+rec.carryFrom:'—'));
     let extra='';
     const fl=fhFlagsFor(rec.fhRaw);
     if(fl.length) extra+=' · <span class="fh-warn">'+fl.length+' قيد مميّز</span>';
@@ -2005,7 +2104,7 @@ function processTasarraf(rows){
       if(k.includes('مجموع')&&k.includes('التصرف')){tot=safeNum(row[k]);break;}
     }
     flows['__total__']=tot!==null?fhRound6(tot):(total>0?fhRound6(total):null);
-    DB.lookup[key][y]={...existing,date:dt,flows,fhRaw:rawUH,flowsSrc:'sheet'};
+    DB.lookup[key][y]={...existing,date:dt,flows,fhRaw:rawUH,flowsSrc:'sheet',carryFrom:null,carryAge:null};
     FH_STATE.scan=null;
   });
 }
@@ -2135,6 +2234,7 @@ async function autoRefresh(){
   try{
     const tRows=await fetchSheet(TASARR_ID,TASARR_GID);
     processTasarraf(tRows);
+    applyCarryForward();
     rebuildDerived();
     renderAll();
     calcShift();
@@ -2457,8 +2557,8 @@ function sameSpanAvg(){
   for(let i=0;i<keys.length;i++){
     const yrs=DB.lookup[keys[i]];
     const rc=yrs[String(CURR)], rp=yrs[String(PREV)];
-    const vc=rc&&rc.flows?rc.flows['__total__']:null;
-    const vp=rp&&rp.flows?rp.flows['__total__']:null;
+    const vc=fhAnyFlows(rc)?rc.flows['__total__']:null;
+    const vp=fhAnyFlows(rp)?rp.flows['__total__']:null;
     if(vc===null||vc===undefined) continue;
     if(vp===null||vp===undefined) continue;
     sc+=vc; nc++; sp+=vp; np++;
@@ -3298,11 +3398,12 @@ Chart.defaults.color='#7a96a8';
 Chart.defaults.borderColor='rgba(0,0,0,.06)';
 initSelects();
 seedFeederHistory();
+applyCarryForward();
 rebuildDerived();
 initTrendItems();
 calcShift();
 goToday();
-(function(){var _b=document.getElementById('buildTag'); if(_b) _b.textContent='build '+BUILD+' · sw v36';})();
+(function(){var _b=document.getElementById('buildTag'); if(_b) _b.textContent='build '+BUILD+' · sw v38';})();
 window.addEventListener('load',()=>{
   if(isLocalFile()){
     const st=document.getElementById('impStatus');
